@@ -1,6 +1,6 @@
 # Splink Cohort Builder
 
-A Streamlit application for record linkage and deduplication using Splink and DuckDB. Built at Swansea University as an MVP for cohort construction workflows, targeting both non-technical users and data engineers.
+A Streamlit application for record linkage and deduplication using Splink and DuckDB. Built at Swansea University as an MVP for cohort construction workflows, targeting both non-technical and technical users.
 
 Access it online at https://cohort-builder.streamlit.app/
 ---
