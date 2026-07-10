@@ -152,12 +152,14 @@ def _go_to(page):
 
 
 def _go_back():
-    """Navigate to the previous page by popping the history stack."""
     history = st.session_state["page_history"]
     if history:
         prev = history.pop()
         st.session_state["page_history"] = history
         st.session_state["page"] = prev
+        # If returning to the landing page, reset flow so standard sidebar reappears
+        if prev == 0:
+            st.session_state["flow"] = "standard"
         st.rerun()
 
 
@@ -180,9 +182,24 @@ def _render_sidebar():
 
     # Show which flow is active
     if flow == "advanced":
-        st.sidebar.caption("Mode: Advanced (JSON upload)")
+        if st.sidebar.button("Switch to Standard Mode"):
+            st.session_state["flow"] = "standard"
+            st.session_state["page"] = 0
+            st.session_state["page_history"] = []
+            st.rerun()
+        st.sidebar.divider()
+        for key, label in ADVANCED_LABELS.items():
+
     else:
-        st.sidebar.caption("Mode: Standard (guided workflow)")
+            for i, label in enumerate(STANDARD_LABELS):
+                current = i == page
+                if current:
+                    # Current page shown as bold text, not a button
+                    st.sidebar.markdown(f"**-> Step {i + 1}: {label}**")
+                else:
+                    # All other steps are clickable buttons
+                    if st.sidebar.button(f"Step {i + 1}: {label}", key=f"nav_std_{i}"):
+                        _go_to(i)
 
     st.sidebar.divider()
     page = st.session_state["page"]
@@ -190,10 +207,11 @@ def _render_sidebar():
     if flow == "advanced":
         for key, label in ADVANCED_LABELS.items():
             current = key == page
-            prefix  = "-> " if current else "   "
-            st.sidebar.markdown(
-                f"**{prefix}{label}**" if current else f"{prefix}{label}"
-            )
+            if current:
+                st.sidebar.markdown(f"**-> {label}**")
+            else:
+                if st.sidebar.button(label, key=f"nav_adv_{key}"):
+                    _go_to(key)
     else:
         for i, label in enumerate(STANDARD_LABELS):
             current = i == page
@@ -1262,12 +1280,16 @@ def page_analysis():
                     fig_fs.update_layout(height=300,
                                          xaxis_range=[0,1], yaxis_range=[0,1.05])
                     st.plotly_chart(fig_fs, use_container_width=True)
-            if crl.get("crl_score") is not None:
+            if crl.get("crl_score") is not None: #changed the crl code for scores here
                 cr1,cr2,cr3,cr4 = st.columns(4)
-                cr1.metric("CRL Score", f"{crl.get('crl_score',0):.6f}")
-                cr2.metric("t_upper",   str(crl.get("t_upper","N/A")))
-                cr3.metric("t_lower",   str(crl.get("t_lower","N/A")))
-                cr4.metric("epsilon_z", str(crl.get("epsilon_z","N/A")))
+
+                def _fmt(val):
+                    return f"{val:.3f}" if val is not None else "N/A"
+
+                cr1.metric("CRL Score", _fmt(crl.get("crl_score")))
+                cr2.metric("t_upper", _fmt(crl.get("t_upper")))
+                cr3.metric("t_lower", _fmt(crl.get("t_lower")))
+                cr4.metric("epsilon_z", _fmt(crl.get("epsilon_z")))
 
     # ═══════════════════════════════════════════════════════════════════════
     # TAB: Raw Data
