@@ -2,14 +2,32 @@
 
 A Streamlit application for record linkage and deduplication using Splink and DuckDB. Built at Swansea University as an MVP for cohort construction workflows, targeting both non-technical and technical users.
 
-Access it online at https://cohort-builder.streamlit.app/
----
+## Access it online at https://cohort-builder.streamlit.app/
+
 
 ## Two workflows
 
 **Standard mode** — guided seven-step workflow for non-technical users. Loads the fake1000 dataset, walks through field selection, blocking rules, operation mode, and linkage type, then produces analysis and an exportable cohort.
 
-**Advanced mode** — for power users who already have a trained Splink model. Upload a model JSON, skip all training steps, and go straight to prediction, analysis, and export.
+**Advanced mode** — for power users who already have a trained Splink model. Upload a model JSON, skip all training steps, and go straight to prediction, analysis, and export.  
+
+You can save your exisiting model on Splink using the following code:
+```
+# Save model to JSON
+linker.misc.save_model_to_json("test_splink_model.json", overwrite=True)
+```
+
+Before uploading, please check if your file has the following format to ensure consistency between runs and the app accepts the uploaded JSON file
+```
+{
+  "link_type": "dedupe_only",
+  "unique_id_column_name": "unique_id",
+  "probability_two_random_records_match": 0.000812,
+  "comparisons": [ ... ],
+  "blocking_rules_to_generate_predictions": [ ... ]
+}
+```
+Please ensure, comparisons contains m and u probabilities. 
 
 ---
 
