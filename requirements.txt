@@ -10,5 +10,5 @@ matplotlib>=3.5.0
 
 # Optional – improves data quality of the generated dummy dataset
 # Uncomment and run: pip install gender-guesser pgeocode
-# gender-guesser>=0.4.0   # Name-based gender inference (fallback: random assignment)
-# pgeocode>=0.4.0          # City-to-real-UK-postcode lookup (fallback: synthetic postcodes)
+gender-guesser>=0.4.0   # Name-based gender inference (fallback: random assignment)
+pgeocode>=0.4.0          # City-to-real-UK-postcode lookup (fallback: synthetic postcodes)
