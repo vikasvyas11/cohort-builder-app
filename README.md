@@ -5,12 +5,13 @@ A Streamlit application for record linkage and deduplication using Splink and Du
 ## Access it online at https://cohort-builder.streamlit.app/
 
 
-## Two workflows
+## Three workflows
 
-**Standard mode** — guided seven-step workflow for non-technical users. Loads the fake1000 dataset, walks through field selection, blocking rules, operation mode, and linkage type, then produces analysis and an exportable cohort.
+** Standard mode **— guided seven-step workflow for non-technical users. Loads the built-in fake1000 dataset, walks through field selection, blocking rules, operation mode, and linkage type, then produces analysis and an exportable cohort.
+** Upload mode **— bring your own data. Upload one or two CSV files, run the automated EDA cleaning pipeline, configure fields and blocking rules, then follow the same analysis, comparison, and export steps as standard mode.
+** Advanced mode **— for power users with a pre-trained Splink model. Upload a model JSON file, skip all training, and jump straight to prediction, interactive blocking exploration, and export. Models trained in standard or upload mode can be saved as JSON and reused here.
 
-**Advanced mode** — for power users who already have a trained Splink model. Upload a model JSON, skip all training steps, and go straight to prediction, analysis, and export.  
-
+--- 
 You can save your exisiting model on Splink using the following code:
 ```
 # Save model to JSON
@@ -36,25 +37,51 @@ Please ensure, comparisons contains m and u probabilities.
 - Probabilistic linkage via Expectation-Maximisation (Splink 4.x + DuckDB backend)
 - Deterministic linkage with exact-match blocking rules
 - Deduplication only, or cross-dataset linkage (Dataset A + Dataset B)
-- Interactive blocking explorer: toggle rules on/off and see the pairwise prediction table update live, with one-click re-clustering
+- Three-mode sidebar switcher to move between Standard, Upload, and Advanced flows at any time
+- Back navigation with history stack on every page
+- Save trained model as JSON for reuse in Advanced mode
+- Interactive blocking explorer: toggle rules on/off, live df_predict table update, one-click re-clustering
 - Composite blocking rules (e.g. first_name + surname as a single rule)
 - Exposed training hyperparameters: EM iterations, convergence threshold, recall estimate
 - Confusion matrix with ground truth from the cluster column: TP, FP, FN, Precision, Recall, F1, F*, FDR, FNR
 - Precision-Recall curve and CRL (Composite Reliability of Linkage) score
-- Clickable sidebar navigation with back button and jump-to-export shortcut
-- Full metrics suite covering linkage-metrics examples 0–16: match weight histogram, gamma scores, cluster size distribution, Venn diagram, inter-run edge comparison
+- Full metrics suite covering linkage-metrics examples 0–16
 - SeRP-style downloadable PDF report with nine sections
 
+---
+
+## EDA pipeline (Upload mode)
+When you upload a CSV the following cleaning steps run automatically:
+
+1. Field name standardisation — lowercase, underscores, strip trailing numbers and special characters
+2. Field type detection — infers semantic type (first_name, surname, dob, gender, location, postcode, email, id) from column names to drive comparison and blocking suggestions
+3. Remove 100%-null columns — columns where every value is missing are dropped
+4. Remove 100%-null rows — rows with no values at all are dropped
+5. Remove n-1 null rows — rows with only one non-null value are dropped
+6. Remove n-2 null rows — rows with only two non-null values are dropped
+7. Text cleaning — strip whitespace, Title Case for name fields, lowercase for all other text
+8. Duplicate removal — exact duplicate rows are dropped
+9. Date standardisation — parses common date formats (DD/MM/YYYY, YYYYMMDD, etc.) and converts to YYYY-MM-DD
+10. Correlation check — finds pairs of non-ID columns with >= 95% value-level agreement and asks which field to keep
+11. EDA summary display — shows rows removed per step, fields changed, detected types, and a cleaned data preview
+12. Download cleaned CSV — the cleaned dataset can be saved before proceeding
+
+### Dataset B options (Upload mode)
+
+- Upload a second CSV directly as Dataset B
+- Create a 30% sample of Dataset A with controlled errors introduced (14% name typos, 5% missing DOBs, 15% email variations, 11% city abbreviations, 7% gender errors) for testing linkage
+- Deduplication only (no Dataset B required)  
 ---
 
 ## Project structure
 
 ```
-splink_cohort_builder/
-├── app.py                    # Main Streamlit app (two flows, session-state navigation)
+cohort_builder/
+├── app.py                    # Main Streamlit app (three flows, session-state navigation)
 ├── modules/
 │   ├── data_builder.py       # Builds fake1000 with gender and UK postcode
-│   ├── splink_runner.py      # Linkage workflow, JSON flow, coverage matrix, re-clustering
+│   ├── eda_engine.py         # Automated EDA and cleaning pipeline for uploaded data
+│   ├── splink_runner.py      # Linkage workflow, JSON flow, coverage matrix, re-clustering, model JSON export
 │   ├── metrics_engine.py     # All linkage quality metrics (examples 0-16 + confusion matrix)
 │   └── report_gen.py         # SeRP-style PDF report generator
 └── requirements.txt
@@ -85,6 +112,11 @@ streamlit, splink, duckdb, pandas, numpy, plotly, fpdf2, matplotlib
 
 ---
 
+## Testing the JSON upload feature
+Generate a trained model JSON from any notebook or from the app itself (Save model JSON button on the analysis page), then upload it in Advanced mode. The JSON must be produced by linker.misc.save_model_to_json() or by the app's export function, which injects trained m/u probabilities into the comparison levels.
+
+---
+
 ## Datasets
 
 The built-in fake1000 dataset is derived from Splink's fake_1000, augmented with gender (inferred from first_name) and postcode (UK GeoNames lookup by city). Dataset B is a 50% sample of Dataset A with controlled errors: 14% first-name typos, 9% surname typos, 5% missing DOBs, 15% email variations, 11% city abbreviations, 7% gender errors.
@@ -106,10 +138,10 @@ The built-in fake1000 dataset is derived from Splink's fake_1000, augmented with
 
 ## Known limitations and planned work
 
-- Upload own CSV dataset: UI placeholder present, not yet functional
 - Composite blocking rules currently limited to pairs of fields
-- SAIL Databank provisioning on the export page is a placeholder
-- File upload in advanced mode only accepts Splink 4.x model JSON format
+- SAIL Databank provisioning on the export page is a placeholder for full deployment
+- The EDA correlation check uses value-level co-occurrence for text fields, not statistical correlation; this is intentional and appropriate for record linkage use cases
+- Upload mode currently accepts CSV only; DuckDB, Parquet, and Excel support is planned
 
 ---
 

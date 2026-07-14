@@ -32,18 +32,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from modules.data_builder import build_datasets, get_library_status
-from modules.eda_engine import (
-    run_full_eda, find_high_correlation_pairs, detect_field_types,
-    suggest_comparison_types, suggest_blocking_rules,
-    introduce_errors_for_sample,
-)
 from modules.splink_runner import (
     run_linkage,
     run_linkage_from_json,
     build_coverage_matrix,
     filter_predict_by_active_rules,
     recluster_filtered,
-    reconstruct_model_json,
 )
 from modules.metrics_engine import (
     compute_intra_metrics,
@@ -135,22 +129,6 @@ def _init_state():
         "coverage_matrix":   None,      # Per-pair field coverage DataFrame
         "explorer_toggles":  {},        # Which blocking rules are ON in explorer
         "explorer_threshold": 0.8,      # Cluster threshold for live re-clustering
-
-        # ── Upload flow (new) ──────────────────────────────────────────────
-        "upload_raw_df":     None,   # Original uploaded DataFrame before cleaning
-        "upload_clean_df":   None,   # Cleaned DataFrame after EDA pipeline
-        "upload_df_b":       None,   # Second dataset or error-introduced sample
-        "upload_field_types": {},    # column → detected type string
-        "upload_name_map":   {},     # original_name → cleaned_name
-        "upload_eda_log":    {},     # What each EDA step did
-        "upload_corr_pairs": [],     # (col_a, col_b, score) high-correlation pairs
-        "upload_dropped":    set(),  # Columns user chose to drop from corr check
-        "upload_id_col":     None,   # Which column is the unique identifier
-        "upload_comp_types": {},     # column → comparison type string
-        "upload_block_toggles": {},  # column → bool blocking rule
-        "upload_comp_rules": {},     # composite blocking rules
-        "upload_has_two":    False,  # Whether user uploaded two separate datasets
-        "upload_two_df":     None,   # Optionally uploaded second raw dataset
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -174,12 +152,14 @@ def _go_to(page):
 
 
 def _go_back():
-    """Navigate to the previous page by popping the history stack."""
     history = st.session_state["page_history"]
     if history:
         prev = history.pop()
         st.session_state["page_history"] = history
         st.session_state["page"] = prev
+        # If returning to the landing page, reset flow so standard sidebar reappears
+        if prev == 0:
+            st.session_state["flow"] = "standard"
         st.rerun()
 
 
@@ -201,26 +181,6 @@ def _render_sidebar():
     st.sidebar.title("Cohort Builder")
 
     # Show which flow is active
-    # ── Mode switcher: small buttons to swap between all three flows ──────────
-    st.sidebar.write("**Switch mode:**")
-    ms1, ms2, ms3 = st.sidebar.columns(3)
-    if ms1.button("Std", key="sw_std", help="Standard guided workflow"):
-        st.session_state["flow"] = "standard"
-        st.session_state["page"] = 0
-        st.session_state["page_history"] = []
-        st.rerun()
-    if ms2.button("Upload", key="sw_up", help="Upload your own CSV dataset"):
-        st.session_state["flow"] = "upload"
-        st.session_state["page"] = "upload_setup"
-        st.session_state["page_history"] = []
-        st.rerun()
-    if ms3.button("Adv", key="sw_adv", help="Upload pre-trained model JSON"):
-        st.session_state["flow"] = "advanced"
-        st.session_state["page"] = "advanced_setup"
-        st.session_state["page_history"] = []
-        st.rerun()
-    st.sidebar.divider()
-
     if flow == "advanced":
         st.sidebar.caption("Mode: Advanced (JSON upload)")
     else:
@@ -230,37 +190,29 @@ def _render_sidebar():
     page = st.session_state["page"]
 
     if flow == "advanced":
+        if st.sidebar.button("Switch to Standard Mode"):
+            st.session_state["flow"] = "standard"
+            st.session_state["page"] = 0
+            st.session_state["page_history"] = []
+            st.rerun()
+        st.sidebar.divider()
         for key, label in ADVANCED_LABELS.items():
-            current = key == page
-            prefix  = "-> " if current else "   "
-            st.sidebar.markdown(
-                f"**{prefix}{label}**" if current else f"{prefix}{label}"
-            )
-    elif flow == "upload":
-        UPLOAD_LABELS = {
-            "upload_setup":     "Upload Datasets",
-            "upload_eda":       "EDA and Cleaning",
-            "upload_configure": "Configure Fields",
-            2: "Operation Mode",
-            3: "Linkage Type",
-            4: "Run Analysis",
-            5: "Compare Runs",
-            6: "Export Cohort",
-        }
-        for key, label in UPLOAD_LABELS.items():
             current = key == page
             if current:
                 st.sidebar.markdown(f"**-> {label}**")
             else:
-                if st.sidebar.button(label, key=f"nav_up_{key}"):
+                if st.sidebar.button(label, key=f"nav_adv_{key}"):
                     _go_to(key)
     else:
         for i, label in enumerate(STANDARD_LABELS):
             current = i == page
-            prefix  = "-> " if current else f"Step {i+1}: "
-            st.sidebar.markdown(
-                f"**{prefix}{label}**" if current else f"{prefix}{label}"
-            )
+            if current:
+                # Current page shown as bold text, not a button
+                st.sidebar.markdown(f"**-> Step {i+1}: {label}**")
+            else:
+                # All other steps are clickable buttons
+                if st.sidebar.button(f"Step {i+1}: {label}", key=f"nav_std_{i}"):
+                    _go_to(i)
 
     st.sidebar.divider()
 
@@ -380,7 +332,7 @@ def page_landing():
     )
     st.divider()
 
-    col_std, col_up, col_adv = st.columns(3, gap="large")
+    col_std, col_adv, col_csv = st.columns(3, gap="large")
 
     # ── Standard flow card ────────────────────────────────────────────────────
     with col_std:
@@ -423,19 +375,15 @@ def page_landing():
             st.session_state["flow"] = "advanced"
             _go_to("advanced_setup")
 
-    # ── Upload flow card ─────────────────────────────────────────────────────
-    with col_up:
-        st.subheader("Upload Your Data")
-        st.caption("Upload one or two CSV datasets")
+    # ── Upload own CSV (coming soon) ──────────────────────────────────────────
+    with col_csv:
+        st.subheader("Upload Your Dataset")
+        st.caption("Coming in full deployment")
         st.write(
-            "Upload your own records. The app will clean the data with automated "
-            "EDA (field name standardisation, null removal, deduplication, date "
-            "standardisation, correlation check), then guide you through field "
-            "configuration and blocking rules before running analysis."
+            "Upload your own CSV records and define custom fields, blocking rules, "
+            "and comparisons. Available in the full SAIL deployment version."
         )
-        if st.button("Upload dataset", use_container_width=True):
-            st.session_state["flow"] = "upload"
-            _go_to("upload_setup")
+        st.info("This option is not available in this MVP.")
 
     # ── Preview if dataset is loaded ──────────────────────────────────────────
     if st.session_state["dataset_ready"]:
@@ -475,8 +423,7 @@ def page_landing():
         st.write(
             "Match probability distributions, gamma scores, cluster metrics, "
             "a Venn diagram, a confusion matrix with Precision/Recall/F1, "
-            "an interactive blocking explorer, a downloadable PDF report, "
-            "and the option to save your trained model as a JSON file."
+            "an interactive blocking explorer, and a downloadable SeRP-style PDF report."
         )
 
 
@@ -1329,10 +1276,14 @@ def page_analysis():
                     st.plotly_chart(fig_fs, use_container_width=True)
             if crl.get("crl_score") is not None:
                 cr1,cr2,cr3,cr4 = st.columns(4)
-                cr1.metric("CRL Score", f"{crl.get('crl_score',0):.6f}")
-                cr2.metric("t_upper",   str(crl.get("t_upper","N/A")))
-                cr3.metric("t_lower",   str(crl.get("t_lower","N/A")))
-                cr4.metric("epsilon_z", str(crl.get("epsilon_z","N/A")))
+
+                def _fmt(val):
+                    return f"{val:.3f}" if val is not None else "N/A"
+
+                cr1.metric("CRL Score", _fmt(crl.get("crl_score")))
+                cr2.metric("t_upper", _fmt(crl.get("t_upper")))
+                cr3.metric("t_lower", _fmt(crl.get("t_lower")))
+                cr4.metric("epsilon_z", _fmt(crl.get("epsilon_z")))
 
     # ═══════════════════════════════════════════════════════════════════════
     # TAB: Raw Data
@@ -1350,37 +1301,6 @@ def page_analysis():
         st.dataframe(results["df_cluster"].head(100), use_container_width=True)
 
     # ── PDF download ──────────────────────────────────────────────────────────
-    st.divider()
-    st.subheader("Save trained model as JSON")
-    st.write(
-        "Download the trained model as a JSON file. You can upload this file "
-        "later using Advanced Mode to skip training and go straight to prediction."
-    )
-    if st.button("Generate model JSON for download"):
-        r = st.session_state.get("run1_results", {})
-        mp = r.get("model_params", {})
-        su = r.get("settings_used", {})
-        if not su:
-            st.warning("No settings available. Run the analysis first.")
-        else:
-            try:
-                model_json = reconstruct_model_json(su, mp)
-                json_bytes = json.dumps(model_json, indent=2).encode("utf-8")
-                st.download_button(
-                    "Download model JSON",
-                    data=json_bytes,
-                    file_name="splink_trained_model.json",
-                    mime="application/json",
-                )
-                if mp.get("training_complete"):
-                    st.success("Model JSON includes trained m/u probabilities. "
-                               "Upload this in Advanced Mode to skip training.")
-                else:
-                    st.info("Model JSON contains settings only (deterministic run). "
-                            "Uploading it in Advanced Mode will run prediction without EM training.")
-            except Exception as e:
-                st.error(f"Failed to generate model JSON: {e}")
-
     st.divider()
     st.subheader("Download SeRP-style PDF Report")
     if st.button("Generate PDF report"):
@@ -1707,16 +1627,6 @@ def main():
     if flow == "advanced":
         router = {"advanced_setup": page_advanced_setup, **shared}
         router.get(page, page_advanced_setup)()
-    elif flow == "upload":
-        router = {
-            "upload_setup":     page_upload_setup,
-            "upload_eda":       page_eda,
-            "upload_configure": page_upload_configure,
-            2: page_operation,
-            3: page_linkage_type,
-            **shared,
-        }
-        router.get(page, page_upload_setup)()
     else:
         router = {
             0: page_landing,
@@ -1730,438 +1640,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# =============================================================================
-# ── UPLOAD FLOW: PAGE 1 — DATASET UPLOAD ──────────────────────────────────────
-# =============================================================================
-
-def page_upload_setup():
-    _back_button("Back to landing")
-    st.title("Upload Your Dataset")
-    st.write(
-        "Upload one or two CSV files. If you upload one dataset the app will "
-        "offer deduplication and optionally create a 30% error-introducing sample "
-        "for testing linkage. If you upload two datasets both options are available."
-    )
-    st.divider()
-
-    # ── Primary dataset ───────────────────────────────────────────────────────
-    st.subheader("1. Upload primary dataset (Dataset A)")
-    file_a = st.file_uploader(
-        "Primary CSV file",
-        type=["csv"],
-        key="file_a_uploader",
-        help="The main dataset you want to deduplicate or use as Dataset A for linking.",
-    )
-    if file_a is not None:
-        try:
-            df_a = pd.read_csv(file_a)             # Parse the uploaded CSV
-            st.success(f"Dataset A loaded: {len(df_a):,} rows, {df_a.shape[1]} columns.")
-            with st.expander("Preview (first 5 rows)", expanded=False):
-                st.dataframe(df_a.head(5), use_container_width=True)
-            st.session_state["upload_raw_df"] = df_a
-        except Exception as e:
-            st.error(f"Could not read CSV: {e}")
-
-    st.divider()
-
-    # ── Unique ID column selection ────────────────────────────────────────────
-    df_a = st.session_state.get("upload_raw_df")
-    id_col = None
-    if df_a is not None:
-        st.subheader("2. Select or generate a unique identifier column")
-        id_options  = ["Auto-generate unique_id"] + list(df_a.columns)
-        id_choice   = st.selectbox(
-            "Which column uniquely identifies each record?",
-            options=id_options,
-            help="Splink requires every record to have a unique ID. "
-                 "If your data does not have one, select 'Auto-generate'.",
-        )
-        if id_choice != "Auto-generate unique_id":
-            id_col = id_choice
-        st.session_state["upload_id_col"] = id_col
-        st.divider()
-
-    # ── Second dataset or sample ──────────────────────────────────────────────
-    st.subheader("3. Second dataset (for linking)")
-    upload_mode = st.radio(
-        "How do you want to set up Dataset B?",
-        options=[
-            "Deduplication only (no Dataset B needed)",
-            "Upload a second CSV as Dataset B",
-            "Create a 30% sample of Dataset A with errors (for testing linking)",
-        ],
-        index=0,
-    )
-
-    file_b = None
-    if upload_mode == "Upload a second CSV as Dataset B":
-        file_b = st.file_uploader(
-            "Second CSV file (Dataset B)",
-            type=["csv"],
-            key="file_b_uploader",
-        )
-        if file_b is not None:
-            try:
-                df_b = pd.read_csv(file_b)
-                st.success(f"Dataset B loaded: {len(df_b):,} rows.")
-                st.session_state["upload_two_df"] = df_b
-                st.session_state["upload_has_two"]  = True
-            except Exception as e:
-                st.error(f"Could not read second CSV: {e}")
-
-    st.session_state["upload_sample_mode"] = upload_mode
-
-    st.divider()
-    if df_a is not None:
-        if st.button("Continue to EDA and cleaning", type="primary"):
-            _go_to("upload_eda")
-
-
-# =============================================================================
-# ── UPLOAD FLOW: PAGE 2 — EDA AND CLEANING ────────────────────────────────────
-# =============================================================================
-
-def page_eda():
-    _back_button("Back to upload")
-    st.title("EDA and Data Cleaning")
-
-    df_raw = st.session_state.get("upload_raw_df")
-    if df_raw is None:
-        st.warning("No dataset uploaded. Go back and upload a CSV first.")
-        if st.button("Go to upload"):
-            _go_to("upload_setup")
-        return
-
-    id_col = st.session_state.get("upload_id_col")
-
-    # ── Run EDA pipeline ──────────────────────────────────────────────────────
-    st.subheader("Cleaning pipeline")
-    st.write(
-        "The following steps are applied automatically to your dataset. "
-        "Results are shown below."
-    )
-    if st.button("Run EDA cleaning pipeline", type="primary") or st.session_state.get("upload_clean_df") is not None:
-        if st.session_state.get("upload_clean_df") is None:
-            with st.spinner("Running EDA pipeline..."):
-                df_clean, field_types, name_map, eda_log = run_full_eda(
-                    df_raw.copy(), id_col=id_col
-                )
-                st.session_state["upload_clean_df"]   = df_clean
-                st.session_state["upload_field_types"] = field_types
-                st.session_state["upload_name_map"]    = name_map
-                st.session_state["upload_eda_log"]     = eda_log
-
-                # Find correlation pairs after cleaning
-                id_type_cols = [c for c, t in field_types.items() if t == 'id']
-                corr_pairs = find_high_correlation_pairs(df_clean, id_type_cols)
-                st.session_state["upload_corr_pairs"] = corr_pairs
-
-        df_clean   = st.session_state["upload_clean_df"]
-        eda_log    = st.session_state["upload_eda_log"]
-        field_types = st.session_state["upload_field_types"]
-        name_map   = st.session_state["upload_name_map"]
-        corr_pairs = st.session_state.get("upload_corr_pairs", [])
-        summary    = eda_log.get("summary", {})
-
-        # ── EDA summary KPIs ─────────────────────────────────────────────────
-        st.divider()
-        st.subheader("EDA Summary")
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Original rows",  f"{summary.get('original_rows',0):,}")
-        k2.metric("Rows removed",   f"{summary.get('rows_removed',0):,}",
-                  delta=f"-{summary.get('rows_removed',0):,}", delta_color="inverse")
-        k3.metric("Remaining rows", f"{summary.get('final_rows',0):,}")
-        k4.metric("Cols removed",   f"{summary.get('cols_removed',0):,}",
-                  delta=f"-{summary.get('cols_removed',0):,}", delta_color="inverse")
-
-        # Step-by-step detail
-        with st.expander("Step-by-step cleaning log", expanded=False):
-            # Field name changes
-            changed_names = eda_log.get("field_names", {}).get("changed", {})
-            if changed_names:
-                st.write("**Field names standardised:**")
-                for orig, new in changed_names.items():
-                    st.write(f"  `{orig}` → `{new}`")
-            else:
-                st.write("Field names: no changes needed.")
-
-            # Null columns
-            dropped_cols = eda_log.get("null_columns_dropped", [])
-            st.write(f"**Columns dropped (100% null):** {len(dropped_cols)}"
-                     + (f" – {dropped_cols}" if dropped_cols else ""))
-
-            # Null rows
-            null_rows = eda_log.get("null_rows_removed", {})
-            st.write(f"**Rows removed (100% null):** {null_rows.get('100%_null',0):,}")
-            st.write(f"**Rows removed (n-1 null):**  {null_rows.get('n-1_null',0):,}")
-            st.write(f"**Rows removed (n-2 null):**  {null_rows.get('n-2_null',0):,}")
-            st.write(f"**Duplicate rows removed:**   {eda_log.get('duplicates_removed',0):,}")
-
-            # Date standardisation
-            date_fmts = eda_log.get("dates_standardised", {})
-            if date_fmts:
-                st.write("**Date columns standardised to YYYY-MM-DD:**")
-                for col, fmt in date_fmts.items():
-                    st.write(f"  `{col}` — parsed as `{fmt}`")
-
-        # ── Detected field types ──────────────────────────────────────────────
-        st.divider()
-        st.subheader("Detected field types")
-        st.write(
-            "The app has automatically detected the semantic type of each column. "
-            "These drive comparison method and blocking rule suggestions. "
-            "You can override them on the next page."
-        )
-        type_df = pd.DataFrame([
-            {"Column": col, "Detected Type": ftype,
-             "Comparison Suggestion": suggest_comparison_types({col: ftype}).get(col, "ExactMatch")}
-            for col, ftype in field_types.items()
-        ])
-        st.dataframe(type_df, use_container_width=True, hide_index=True)
-
-        # ── Correlation check ─────────────────────────────────────────────────
-        if corr_pairs:
-            st.divider()
-            st.subheader("High-correlation field pairs")
-            st.write(
-                "The following pairs of fields have very similar values (correlation >= 0.95). "
-                "Keeping both in the comparison model adds little information and slows training. "
-                "For each pair, choose which field to keep."
-            )
-            dropped = set(st.session_state.get("upload_dropped", set()))
-            for col_a, col_b, score in corr_pairs:
-                with st.container(border=True):
-                    cc1, cc2, cc3 = st.columns([2, 2, 2])
-                    cc1.write(f"**{col_a}**")
-                    cc2.write(f"**{col_b}**")
-                    cc3.write(f"Score: `{score:.4f}`")
-                    keep = st.radio(
-                        f"Keep which field? (pair: {col_a} vs {col_b})",
-                        options=[col_a, col_b, "Keep both"],
-                        horizontal=True,
-                        key=f"corr_{col_a}_{col_b}",
-                    )
-                    if keep == col_a:
-                        dropped.add(col_b)
-                    elif keep == col_b:
-                        dropped.add(col_a)
-                    # "Keep both" removes neither
-
-            st.session_state["upload_dropped"] = dropped
-
-            if dropped:
-                df_clean = df_clean.drop(
-                    columns=[c for c in dropped if c in df_clean.columns]
-                )
-                st.session_state["upload_clean_df"] = df_clean
-                # Re-sync field_types
-                field_types = {c: t for c, t in field_types.items() if c not in dropped}
-                st.session_state["upload_field_types"] = field_types
-                st.caption(f"Columns removed from correlation check: {', '.join(dropped)}")
-
-        # ── Cleaned data preview ──────────────────────────────────────────────
-        st.divider()
-        st.subheader("Cleaned dataset preview")
-        st.dataframe(df_clean.head(10), use_container_width=True)
-        st.caption(f"Shape: {df_clean.shape[0]:,} rows × {df_clean.shape[1]} columns")
-
-        # ── Download clean CSV ────────────────────────────────────────────────
-        csv_bytes = df_clean.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "Download cleaned CSV",
-            data=csv_bytes,
-            file_name="cleaned_dataset.csv",
-            mime="text/csv",
-        )
-
-        st.divider()
-        if st.button("Continue to field configuration", type="primary"):
-            _go_to("upload_configure")
-
-
-# =============================================================================
-# ── UPLOAD FLOW: PAGE 3 — FIELD CONFIG AND BLOCKING RULES ─────────────────────
-# =============================================================================
-
-def page_upload_configure():
-    _back_button("Back to EDA")
-    st.title("Configure Fields and Blocking Rules")
-
-    df_clean    = st.session_state.get("upload_clean_df")
-    field_types = st.session_state.get("upload_field_types", {})
-
-    if df_clean is None:
-        st.warning("No cleaned dataset found. Go back to EDA first.")
-        if st.button("Go to EDA"):
-            _go_to("upload_eda")
-        return
-
-    # ── Unique ID configuration ───────────────────────────────────────────────
-    st.subheader("1. Unique identifier")
-    id_cols    = [c for c, t in field_types.items() if t == 'id']
-    non_id_cols = [c for c in df_clean.columns if c not in id_cols]
-
-    id_options = id_cols + non_id_cols
-    current_id  = st.session_state.get("upload_id_col") or (id_cols[0] if id_cols else None)
-    chosen_id   = st.selectbox(
-        "Unique ID column (will be added automatically if not found):",
-        options=["[Auto-generate]"] + id_options,
-        index=0 if current_id is None else (id_options.index(current_id) + 1
-                                             if current_id in id_options else 0),
-    )
-    if chosen_id == "[Auto-generate]":
-        # Add a sequential unique_id column if user wants auto-generation
-        if "unique_id" not in df_clean.columns:
-            df_clean = df_clean.copy()
-            df_clean.insert(0, "unique_id", range(1, len(df_clean) + 1))
-            df_clean["unique_id"] = "R" + df_clean["unique_id"].astype(str)
-            st.session_state["upload_clean_df"] = df_clean
-        chosen_id = "unique_id"
-        field_types["unique_id"] = "id"
-        st.session_state["upload_field_types"] = field_types
-
-    st.session_state["upload_id_col"] = chosen_id
-    st.caption(f"Using `{chosen_id}` as the unique identifier.")
-
-    st.divider()
-
-    # ── Comparison field selection and type override ───────────────────────────
-    st.subheader("2. Comparison fields and types")
-    st.write(
-        "Select which fields to include in the linkage model. "
-        "Override the detected comparison type if needed."
-    )
-    comp_suggestions = suggest_comparison_types(field_types)
-    selected_fields  = []
-    comp_types       = {}
-    COMP_OPTIONS     = ["NameComparison", "DateOfBirthComparison", "ExactMatch"]
-
-    for col, suggested_type in comp_suggestions.items():
-        if col == chosen_id:
-            continue
-        row1, row2, row3 = st.columns([2, 2, 1])
-        include = row1.checkbox(col, value=True, key=f"up_inc_{col}")
-        if include:
-            chosen_type = row2.selectbox(
-                "",
-                options=COMP_OPTIONS,
-                index=COMP_OPTIONS.index(suggested_type) if suggested_type in COMP_OPTIONS else 2,
-                key=f"up_type_{col}",
-                label_visibility="collapsed",
-            )
-            row3.caption(field_types.get(col, "unknown"))
-            selected_fields.append(col)
-            comp_types[col] = chosen_type
-
-    st.session_state["upload_selected_fields"] = selected_fields
-    st.session_state["upload_comp_types"]      = comp_types
-
-    st.divider()
-
-    # ── Blocking rules (suggested + toggle) ───────────────────────────────────
-    st.subheader("3. Blocking rules")
-    st.write(
-        "Blocking rules reduce the comparison space. "
-        "Suggested rules are shown enabled; toggle any off to exclude them."
-    )
-    block_suggestions = suggest_blocking_rules(field_types)
-    block_toggles     = {}
-    bt_cols = st.columns(3)
-    for i, field in enumerate(selected_fields):
-        col = bt_cols[i % 3]
-        suggested = block_suggestions.get(field, False)
-        enabled = col.toggle(
-            field,
-            value=st.session_state.get("upload_block_toggles", {}).get(field, suggested),
-            key=f"up_block_{field}",
-        )
-        block_toggles[field] = enabled
-
-    if not any(block_toggles.values()):
-        st.error("At least one blocking rule must be enabled.")
-        return
-    st.session_state["upload_block_toggles"] = block_toggles
-
-    # ── Composite blocking rules ──────────────────────────────────────────────
-    with st.expander("Add composite blocking rules", expanded=False):
-        cb1, cb2, cb3 = st.columns([2, 2, 1])
-        cf1 = cb1.selectbox("Field 1", selected_fields, key="up_cb_f1")
-        cf2_opts = [f for f in selected_fields if f != cf1]
-        if cf2_opts:
-            cf2 = cb2.selectbox("Field 2", cf2_opts, key="up_cb_f2")
-        else:
-            cf2 = None
-        if cb3.button("Add", key="up_cb_add") and cf2:
-            key = f"{cf1}+{cf2}"
-            st.session_state["upload_comp_rules"][key] = True
-
-        for key in list(st.session_state.get("upload_comp_rules", {}).keys()):
-            parts = key.split("+")
-            cr1, cr2 = st.columns([4, 1])
-            cr1.code(f'l."{parts[0]}" = r."{parts[0]}" AND l."{parts[1]}" = r."{parts[1]}"')
-            if cr2.button("Remove", key=f"up_rm_{key}"):
-                del st.session_state["upload_comp_rules"][key]
-
-    st.divider()
-
-    # ── Handle Dataset B ──────────────────────────────────────────────────────
-    st.subheader("4. Dataset B setup")
-    sample_mode = st.session_state.get("upload_sample_mode", "")
-
-    if "Create a 30% sample" in sample_mode:
-        st.write(
-            "A 30% sample of Dataset A will be created with controlled errors "
-            "introduced (typos in names, missing dates, email variations, etc.). "
-            "This simulates a second data source for testing linkage."
-        )
-        if st.button("Generate error-introducing sample (Dataset B)"):
-            with st.spinner("Creating error sample..."):
-                try:
-                    df_b = introduce_errors_for_sample(
-                        df_clean, field_types, sample_frac=0.3, seed=42
-                    )
-                    st.session_state["upload_df_b"] = df_b
-                    st.success(f"Dataset B created: {len(df_b):,} records.")
-                    st.dataframe(df_b.head(3), use_container_width=True)
-                except Exception as e:
-                    st.error(f"Failed: {e}")
-    elif "two" in sample_mode.lower() or st.session_state.get("upload_has_two"):
-        raw_b = st.session_state.get("upload_two_df")
-        if raw_b is not None:
-            st.write("Running EDA cleaning on Dataset B...")
-            if st.session_state.get("upload_df_b") is None:
-                try:
-                    df_b_clean, _, _, _ = run_full_eda(raw_b.copy(), id_col=None)
-                    df_b_clean["source_dataset"] = "B"
-                    st.session_state["upload_df_b"] = df_b_clean
-                    st.success(f"Dataset B cleaned: {len(df_b_clean):,} rows.")
-                except Exception as e:
-                    st.error(f"Dataset B cleaning failed: {e}")
-    else:
-        st.write("Deduplication only — no Dataset B required.")
-
-    st.divider()
-
-    # ── Finalise: push datasets into shared session state ─────────────────────
-    if st.button("Continue to operation mode", type="primary"):
-        # Store cleaned dataset as fakea (shared key used by analysis pages)
-        df_a = df_clean.copy()
-        if "source_dataset" not in df_a.columns:
-            df_a["source_dataset"] = "A"             # Tag source dataset
-
-        # Ensure unique_id column exists
-        if "unique_id" not in df_a.columns and chosen_id in df_a.columns:
-            df_a = df_a.rename(columns={chosen_id: "unique_id"})
-
-        st.session_state["fakea"] = df_a
-        st.session_state["fakeb"] = st.session_state.get("upload_df_b")
-        st.session_state["dataset_ready"]     = True
-
-        # Push field/blocking settings into the shared keys used by analysis
-        st.session_state["selected_fields"]   = selected_fields
-        st.session_state["blocking_toggles"]  = block_toggles
-        st.session_state["composite_rules"]   = st.session_state.get("upload_comp_rules", {})
-
-        _go_to(2)    # Go to shared operation mode page
