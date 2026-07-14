@@ -201,20 +201,27 @@ def _render_sidebar():
     st.sidebar.title("Cohort Builder")
 
     # Show which flow is active
-    # ── Mode switcher: small buttons to swap between all three flows ──────────
-    st.sidebar.write("**Switch mode:**")
-    ms1, ms2, ms3 = st.sidebar.columns(3)
-    if ms1.button("Std", key="sw_std", help="Standard guided workflow"):
+    # ── Mode switcher: radio so labels always fit, no squishing ─────────────
+    st.sidebar.caption("Active mode")
+    _mode_map = {"standard": 0, "upload": 1, "advanced": 2}
+    _mode_labels = ["Standard", "Upload Data", "Advanced (JSON)"]
+    _selected_mode = st.sidebar.radio(
+        "mode_switch",
+        options=_mode_labels,
+        index=_mode_map.get(st.session_state.get("flow", "standard"), 0),
+        label_visibility="collapsed",
+    )
+    if _selected_mode == "Standard" and st.session_state.get("flow") != "standard":
         st.session_state["flow"] = "standard"
         st.session_state["page"] = 0
         st.session_state["page_history"] = []
         st.rerun()
-    if ms2.button("Upload", key="sw_up", help="Upload your own CSV dataset"):
+    elif _selected_mode == "Upload Data" and st.session_state.get("flow") != "upload":
         st.session_state["flow"] = "upload"
         st.session_state["page"] = "upload_setup"
         st.session_state["page_history"] = []
         st.rerun()
-    if ms3.button("Adv", key="sw_adv", help="Upload pre-trained model JSON"):
+    elif _selected_mode == "Advanced (JSON)" and st.session_state.get("flow") != "advanced":
         st.session_state["flow"] = "advanced"
         st.session_state["page"] = "advanced_setup"
         st.session_state["page_history"] = []
@@ -257,10 +264,11 @@ def _render_sidebar():
     else:
         for i, label in enumerate(STANDARD_LABELS):
             current = i == page
-            prefix  = "-> " if current else f"Step {i+1}: "
-            st.sidebar.markdown(
-                f"**{prefix}{label}**" if current else f"{prefix}{label}"
-            )
+            if current:
+                st.sidebar.markdown(f"**-> Step {i+1}: {label}**")
+            else:
+                if st.sidebar.button(f"Step {i+1}: {label}", key=f"nav_std_{i}"):
+                    _go_to(i)
 
     st.sidebar.divider()
 
@@ -1728,8 +1736,6 @@ def main():
         router.get(page, page_landing)()
 
 
-if __name__ == "__main__":
-    main()
 
 
 # =============================================================================
@@ -2165,3 +2171,7 @@ def page_upload_configure():
         st.session_state["composite_rules"]   = st.session_state.get("upload_comp_rules", {})
 
         _go_to(2)    # Go to shared operation mode page
+
+
+if __name__ == "__main__":
+    main()
