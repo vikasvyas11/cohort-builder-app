@@ -879,7 +879,7 @@ def page_analysis():
                 st.info("Results produced from uploaded model JSON (no EM training performed).")
 
     # ── Run / re-run button (standard flow only) ──────────────────────────────
-    if flow == "standard":
+    if flow in ("standard", "upload"):
         run_label = (
             "Re-run analysis with current settings"
             if run_results is not None
