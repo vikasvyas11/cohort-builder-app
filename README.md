@@ -7,9 +7,9 @@ A Streamlit application for record linkage and deduplication using Splink and Du
 
 ## Three workflows
 
-** Standard mode **— guided seven-step workflow for non-technical users. Loads the built-in fake1000 dataset, walks through field selection, blocking rules, operation mode, and linkage type, then produces analysis and an exportable cohort.
-** Upload mode **— bring your own data. Upload one or two CSV files, run the automated EDA cleaning pipeline, configure fields and blocking rules, then follow the same analysis, comparison, and export steps as standard mode.
-** Advanced mode **— for power users with a pre-trained Splink model. Upload a model JSON file, skip all training, and jump straight to prediction, interactive blocking exploration, and export. Models trained in standard or upload mode can be saved as JSON and reused here.
+**Standard mode** — guided seven-step workflow for non-technical users. Loads the built-in fake1000 dataset, walks through field selection, blocking rules, operation mode, and linkage type, then produces analysis and an exportable cohort.  
+**Upload mode** — bring your own data. Upload one or two CSV files, run the automated EDA cleaning pipeline, configure fields and blocking rules, then follow the same analysis, comparison, and export steps as standard mode.  
+**Advanced mode** — for power users with a pre-trained Splink model. Upload a model JSON file, skip all training, and jump straight to prediction, interactive blocking exploration, and export. Models trained in standard or upload mode can be saved as JSON and reused here.
 
 --- 
 You can save your exisiting model on Splink using the following code:
