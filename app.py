@@ -1,36 +1,26 @@
 # =============================================================================
-# app.py  –  Splink Cohort Builder  (v3)
+# app.py — Splink Cohort Builder
+# Entry point only. All page logic lives in pages/. All shared utilities in utils/.
 #
-# TWO FLOWS:
-#   Standard  : Guided 7-step workflow for non-technical users.
-#               Landing → Configure → Operation → Linkage Type → Analysis
-#               → Compare → Export
-#   Advanced  : Power-user shortcut.  Upload a pre-trained Splink model JSON,
-#               optionally choose datasets, skip straight to Analysis.
-#               Advanced Setup → Analysis → Compare → Export
+# File structure:
+#   app.py                     ← this file (router + config)
+#   utils/state.py             ← session state init + constants
+#   utils/nav.py               ← navigation helpers + sidebar
+#   utils/helpers.py           ← UI helpers + analysis runner
+#   pages/p_landing.py         ← landing page (three mode cards)
+#   pages/p_standard.py        ← standard flow: configure, operation, linkage type
+#   pages/p_advanced.py        ← advanced flow: JSON model upload
+#   pages/p_upload.py          ← upload flow: setup, EDA, configure (fully dynamic)
+#   pages/p_analysis.py        ← analysis page (shared by all flows)
+#   pages/p_compare_export.py  ← comparison + export pages
+#   modules/                   ← Splink, EDA, metrics, report modules
 #
-# NEW IN v3:
-#   - Back navigation (Previous Step button + sidebar history)
-#   - Advanced/JSON flow on landing page
-#   - Interactive Blocking Explorer tab (live df_predict filtering + re-cluster)
-#   - Export no longer requires Run 2
-#   - Training hyperparameters exposed on Configure page
-#   - Composite blocking rules (field1 + field2) on Configure page
-#   - Sidebar shows current flow and active step
-#
-# Run with:  streamlit run app.py
+# Run:  streamlit run app.py
 # =============================================================================
 
-import json
-import io
-
-import numpy as np
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as gobj
 import streamlit as st
-import streamlit.components.v1 as components
 
+<<<<<<< Updated upstream
 from modules.data_builder import build_datasets, get_library_status
 from modules.eda_engine import (
     run_full_eda, find_high_correlation_pairs, detect_field_types,
@@ -57,34 +47,27 @@ from modules.report_gen import generate_report
 # ─────────────────────────────────────────────────────────────────────────────
 # APP CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
+=======
+>>>>>>> Stashed changes
 st.set_page_config(
-    page_title="Splink Cohort Builder",
+    page_title="Cohort Builder",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# All linkage-eligible fields in the fake1000 dataset
-ALL_FIELDS = ["first_name", "surname", "dob", "city", "email", "gender", "postcode"]
+# ── Imports (after set_page_config) ──────────────────────────────────────────
+from utils.state import _init_state
+from utils.nav import _render_sidebar, _go_to
 
-# Labels for standard flow sidebar
-STANDARD_LABELS = [
-    "Dataset Selection",
-    "Configure Fields and Blocking",
-    "Operation Mode",
-    "Linkage Type",
-    "Run Analysis",
-    "Compare Runs",
-    "Export Cohort",
-]
+from flows.p_landing         import page_landing
+from flows.p_standard        import page_configure, page_operation, page_linkage_type
+from flows.p_advanced        import page_advanced_setup
+from flows.p_upload          import page_upload_setup, page_eda, page_upload_configure
+from flows.p_analysis        import page_analysis
+from flows.p_compare_export  import page_comparison, page_export
 
-# Labels for advanced flow sidebar
-ADVANCED_LABELS = {
-    "advanced_setup": "Advanced Setup (JSON)",
-    4:                "Run Analysis",
-    5:                "Compare Runs",
-    6:                "Export Cohort",
-}
 
+<<<<<<< Updated upstream
 
 # =============================================================================
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
@@ -1703,18 +1686,25 @@ def page_export():
 # =============================================================================
 
 def main():
+=======
+def main() -> None:
+>>>>>>> Stashed changes
     _init_state()
     _render_sidebar()
 
     flow = st.session_state.get("flow", "standard")
     page = st.session_state["page"]
 
-    # Shared pages (analysis, compare, export) are used by both flows
+    # Pages shared across all flows
     shared = {4: page_analysis, 5: page_comparison, 6: page_export}
 
     if flow == "advanced":
         router = {"advanced_setup": page_advanced_setup, **shared}
         router.get(page, page_advanced_setup)()
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
     elif flow == "upload":
         router = {
             "upload_setup":     page_upload_setup,
@@ -1725,7 +1715,12 @@ def main():
             **shared,
         }
         router.get(page, page_upload_setup)()
+<<<<<<< Updated upstream
     else:
+=======
+
+    else:  # standard
+>>>>>>> Stashed changes
         router = {
             0: page_landing,
             1: page_configure,

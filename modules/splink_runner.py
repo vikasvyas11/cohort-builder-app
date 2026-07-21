@@ -236,32 +236,130 @@ def _compute_unlinkables(df_predict: pd.DataFrame, n_records: int) -> tuple:
 # ── CORE SPLINK WORKFLOW FUNCTIONS ───────────────────────────────────────────
 # =============================================================================
 
-def _build_comparisons(selected_fields: list) -> list:
-    """Return a list of Splink comparison objects for the selected fields."""
-    return [
-        _FIELD_COMPARISONS[f]()
-        for f in selected_fields
-        if f in _FIELD_COMPARISONS
-    ]
+def _build_comparisons(selected_fields: list, comp_types: dict = None) -> list:
+    """Return Splink comparison objects for selected fields.
+
+    comp_types: optional dict mapping field_name → comparison type string.
+    Supported strings: NameComparison, DateOfBirthComparison, ExactMatch,
+    LevenshteinAtThresholds, JaroWinklerAtThresholds, EmailComparison,
+    PostcodeComparison.
+    Falls back to _FIELD_COMPARISONS for known fake1000 fields, then ExactMatch.
+    """
+    comps = []
+    for f in selected_fields:
+        # User-specified comparison type takes priority (upload flow)
+        if comp_types and f in comp_types:
+            ct = comp_types[f]
+            if ct == "NameComparison":
+                comps.append(cl.NameComparison(f))
+            elif ct == "DateOfBirthComparison":
+                comps.append(cl.DateOfBirthComparison(f, input_is_string=True))
+            elif ct == "LevenshteinAtThresholds":
+                comps.append(cl.LevenshteinAtThresholds(f, [1, 2]))
+            elif ct == "JaroWinklerAtThresholds":
+                comps.append(cl.JaroWinklerAtThresholds(f, [0.9, 0.7]))
+            elif ct == "EmailComparison":
+                comps.append(cl.EmailComparison(f))
+            elif ct == "PostcodeComparison":
+                comps.append(cl.PostcodeComparison(f))
+            else:
+                comps.append(cl.ExactMatch(f))   # Default for any unknown type
+        elif f in _FIELD_COMPARISONS:
+            comps.append(_FIELD_COMPARISONS[f]()) # Known fake1000 fields
+        else:
+            comps.append(cl.ExactMatch(f))        # Safe fallback for any other field
+    return comps
 
 
 def _build_blocking_rules(blocking_toggles: dict) -> list:
-    """Return active Splink blocking rule objects (only toggled-on fields).
-    Raises ValueError if no rules are active."""
-    active = [
-        _FIELD_BLOCKING_RULES[field]()
-        for field, enabled in blocking_toggles.items()
-        if enabled and field in _FIELD_BLOCKING_RULES
-    ]
+    """Return active Splink blocking rule objects for any field name.
+
+    Supports three rule types:
+      - Single field:    "first_name"          → brl.block_on("first_name")
+      - Composite field: "first_name+surname"  → brl.block_on("first_name","surname")
+      - Any field not in _FIELD_BLOCKING_RULES uses generic brl.block_on(key)
+        so uploaded datasets with arbitrary column names work correctly.
+    """
+    active = []
+    for key, enabled in blocking_toggles.items():
+        if not enabled:
+            continue
+        if "+" in key:
+            # Composite rule: "field1+field2" → brl.block_on("field1","field2")
+            fields = [f.strip() for f in key.split("+") if f.strip()]
+            if len(fields) >= 2:
+                active.append(brl.block_on(*fields))
+        else:
+            # Single field: use brl.block_on for ANY column name
+            active.append(brl.block_on(key))
     if not active:
         raise ValueError("At least one blocking rule must be enabled.")
     return active
 
 
-def _build_model_settings(link_type, selected_fields, blocking_toggles) -> dict:
+def _validate_and_filter_settings(settings: dict, input_tables: list) -> dict:
+    """Remove comparisons and blocking rules for columns absent from any input table.
+
+    This is critical for link_only mode where Dataset A and Dataset B may have
+    different schemas (e.g. NC voter registration vs voter history).
+    If a blocking rule references a column that doesn't exist in one table,
+    DuckDB raises a Binder Error at prediction time.
+
+    Strategy:
+      1. Find the intersection of columns present in ALL input tables.
+      2. Drop any comparison whose output_column_name is not in common_cols.
+      3. Drop any blocking rule that references a column not in common_cols.
+      4. Raise ValueError if no blocking rules survive (nothing to link on).
+    """
+    import re as _re
+
+    # Compute the set of columns that exist in every input table
+    common_cols = set(input_tables[0].columns)
+    for df in input_tables[1:]:
+        common_cols &= set(df.columns)
+
+    # Filter comparisons: keep only those whose column exists in all tables
+    original_comps = settings.get("comparisons", [])
+    settings["comparisons"] = [
+        c for c in original_comps
+        if c.get("output_column_name", "") in common_cols
+    ]
+    dropped_comps = len(original_comps) - len(settings["comparisons"])
+    if dropped_comps:
+        import warnings
+        warnings.warn(
+            f"{dropped_comps} comparison(s) dropped: column(s) not present in all datasets."
+        )
+
+    # Filter blocking rules: parse column names from SQL and check all exist
+    original_rules = settings.get("blocking_rules_to_generate_predictions", [])
+    valid_rules = []
+    for rule in original_rules:
+        sql = rule.get("blocking_rule", "") if isinstance(rule, dict) else str(rule)
+        # Extract all l."col" column references from the SQL string
+        referenced_cols = _re.findall(r'l\."([^"]+)"', sql)
+        if all(c in common_cols for c in referenced_cols):
+            valid_rules.append(rule)
+
+    settings["blocking_rules_to_generate_predictions"] = valid_rules
+
+    if not valid_rules:
+        common_sorted = sorted(common_cols - {"source_dataset"})
+        raise ValueError(
+            "No valid blocking rules remain after column validation. "
+            "All blocking fields must exist in BOTH Dataset A and Dataset B. "
+            f"Columns present in both datasets: {common_sorted}. "
+            "Please reconfigure blocking rules to use only these columns."
+        )
+    return settings
+
+
+def _build_model_settings(link_type, selected_fields, blocking_toggles,
+                          comp_types: dict = None) -> dict:
     """Assemble the Splink settings dict from user inputs.
+    comp_types: optional dict mapping field → comparison type string (upload flow).
     Converts comparison objects and blocking rules to dicts for Splink 4.x."""
-    comparisons    = _build_comparisons(selected_fields)
+    comparisons    = _build_comparisons(selected_fields, comp_types)
     blocking_rules = _build_blocking_rules(blocking_toggles)
     return {
         "link_type":         link_type,
@@ -341,159 +439,6 @@ def _render_cluster_studio_html(linker, df_predict, df_cluster) -> str:
 
 # =============================================================================
 # ── PUBLIC API ────────────────────────────────────────────────────────────────
-# =============================================================================
-
-def run_linkage(
-    fakea: pd.DataFrame,
-    fakeb: Optional[pd.DataFrame],
-    selected_fields: list,
-    blocking_toggles: dict,
-    operation_mode: str,
-    linkage_type: str,
-    cluster_threshold: float = DEFAULT_CLUSTER_THRESHOLD,
-) -> dict:
-    """Run Splink linkage/deduplication and return all results + report data.
-
-    Args:
-        fakea            : Dataset A DataFrame (source_dataset='A')
-        fakeb            : Dataset B DataFrame (source_dataset='B'); None for dedupe
-        selected_fields  : Field names to use in comparisons
-        blocking_toggles : {field: bool} – True = blocking rule enabled
-        operation_mode   : 'dedupe' or 'link_dedupe'
-        linkage_type     : 'deterministic' or 'probabilistic'
-        cluster_threshold: Match probability above which to form entity clusters
-
-    Returns dict with keys:
-        df_predict       : pd.DataFrame – pairwise predictions
-        df_cluster       : pd.DataFrame – entity cluster assignments
-        cluster_html     : str          – Splink cluster studio HTML
-        n_edges          : int
-        n_clusters       : int
-        n_input_records  : int
-        settings_used    : dict         – Splink settings (for report audit trail)
-        model_params     : dict         – m/u weights (probabilistic only)
-        missingness_a    : dict         – {field: pct_complete} for Dataset A
-        missingness_b    : dict         – {field: pct_complete} for Dataset B (link mode)
-        blocking_counts  : list         – comparisons per blocking rule
-        unlinkables      : dict         – {"thresholds": [...], "pcts": [...]}
-        run_config       : dict         – metadata (operation/linkage type, fields, etc.)
-    """
-    link_type = "dedupe_only" if operation_mode == "dedupe" else "link_only"
-
-    # ── Prepare input tables ──────────────────────────────────────────────────
-    if operation_mode == "dedupe":
-        df_for_dedupe = fakea.copy()
-        df_for_dedupe["source_dataset"] = "A"
-        input_tables    = [df_for_dedupe]
-        n_input_records = len(df_for_dedupe)
-    else:
-        input_tables    = [fakea, fakeb]
-        n_input_records = len(fakea) + len(fakeb)
-
-    # ── Compute missingness BEFORE running Splink ─────────────────────────────
-    # All fields including non-selected ones for a complete dataset overview
-    all_report_fields = selected_fields
-    missingness_a = _compute_missingness(fakea, all_report_fields)
-    missingness_b = (_compute_missingness(fakeb, all_report_fields)
-                     if fakeb is not None and operation_mode != "dedupe"
-                     else {})
-
-    # ── Build settings and Linker ─────────────────────────────────────────────
-    settings = _build_model_settings(link_type, selected_fields, blocking_toggles)
-    db_api   = DuckDBAPI()
-    linker   = Linker(
-        input_table_or_tables=input_tables,
-        settings=settings,
-        db_api=db_api,
-        set_up_basic_logging=False,
-    )
-
-    # ── Run model ─────────────────────────────────────────────────────────────
-    model_params = {}    # Only populated for probabilistic runs
-
-    if linkage_type == "deterministic":
-        df_predict_raw    = linker.inference.deterministic_link()
-        df_predict_pd_raw = df_predict_raw.as_pandas_dataframe()
-        df_predict_pd_raw["match_probability"] = 1.0    # All deterministic pairs = certain
-        df_predict_pd_raw["match_weight"]      = 100.0  # High log-odds for deterministic
-
-        # Ensure source_dataset columns exist (may be absent in dedupe_only)
-        if "source_dataset_l" not in df_predict_pd_raw.columns:
-            df_predict_pd_raw["source_dataset_l"] = "A"
-        if "source_dataset_r" not in df_predict_pd_raw.columns:
-            df_predict_pd_raw["source_dataset_r"] = "A"
-
-        # Re-register enriched DataFrame so Splink's clustering step can use it
-        df_predict = linker.table_management.register_table(
-            df_predict_pd_raw, "df_predict_enriched"
-        )
-    else:
-        # Probabilistic: train EM model
-        _train_probabilistic(linker, selected_fields)
-
-        # Extract model parameters BEFORE predict (linker still has trained state)
-        model_params = _extract_model_params(linker)
-
-        df_predict = linker.inference.predict(
-            threshold_match_weight=DEFAULT_MATCH_WEIGHT_THRESHOLD
-        )
-
-    # ── Cluster ───────────────────────────────────────────────────────────────
-    df_cluster = linker.clustering.cluster_pairwise_predictions_at_threshold(
-        df_predict,
-        threshold_match_probability=cluster_threshold,
-    )
-
-    # ── Convert to pandas ─────────────────────────────────────────────────────
-    df_predict_pd = df_predict.as_pandas_dataframe()
-    df_cluster_pd = df_cluster.as_pandas_dataframe()
-
-    # ── Extract blocking rule comparison counts from match_key column ─────────
-    # blocking_rule_sqls maps rule index → SQL string for the report
-    blocking_rule_sqls = [
-        r["blocking_rule"]
-        for r in settings["blocking_rules_to_generate_predictions"]
-    ]
-    blocking_counts = _extract_blocking_counts(df_predict_pd, blocking_rule_sqls)
-
-    # ── Compute unlinkable records curve ─────────────────────────────────────
-    thresh, pcts = _compute_unlinkables(df_predict_pd, n_input_records)
-    unlinkables  = {"thresholds": thresh, "pcts": pcts}
-
-    # ── Generate cluster studio HTML ──────────────────────────────────────────
-    cluster_html = _render_cluster_studio_html(linker, df_predict, df_cluster)
-
-    n_edges    = len(df_predict_pd)
-    n_clusters = df_cluster_pd["cluster_id"].nunique()
-
-    return {
-        "df_predict":       df_predict_pd,
-        "df_cluster":       df_cluster_pd,
-        "cluster_html":     cluster_html,
-        "n_edges":          n_edges,
-        "n_clusters":       n_clusters,
-        "n_input_records":  n_input_records,
-        "settings_used":    settings,
-        "model_params":     model_params,       # NEW: m/u weights for report
-        "missingness_a":    missingness_a,      # NEW: Dataset A completeness
-        "missingness_b":    missingness_b,      # NEW: Dataset B completeness
-        "blocking_counts":  blocking_counts,    # NEW: comparisons per rule
-        "unlinkables":      unlinkables,        # NEW: unlinkable records curve
-        "run_config": {
-            "operation_mode":    operation_mode,
-            "linkage_type":      linkage_type,
-            "selected_fields":   selected_fields,
-            "blocking_toggles":  blocking_toggles,
-            "cluster_threshold": cluster_threshold,
-            "link_type":         link_type,
-        },
-    }
-
-
-# =============================================================================
-# ── ADVANCED FLOW: PRE-TRAINED JSON ──────────────────────────────────────────
-# Loads a user-uploaded Splink model JSON and runs prediction without training.
-# Mirrors the "reload model" pattern from linkage-workflow notebooks.
 # =============================================================================
 
 def run_linkage_from_json(
@@ -769,11 +714,7 @@ def recluster_filtered(
 # expose EM iterations, convergence, recall estimate, and sample size.
 # =============================================================================
 
-# Override the old run_linkage to support hyperparams (monkey-patch approach
-# avoids rewriting the full module; the extra param is fully backward-compatible).
-_original_run_linkage = run_linkage   # Keep reference to the original
-
-def run_linkage(                      # Re-define with extra param
+def run_linkage(
     fakea:            pd.DataFrame,
     fakeb:            Optional[pd.DataFrame],
     selected_fields:  list,
@@ -781,8 +722,9 @@ def run_linkage(                      # Re-define with extra param
     operation_mode:   str,
     linkage_type:     str,
     cluster_threshold: float = DEFAULT_CLUSTER_THRESHOLD,
-    hyperparams:      Optional[dict] = None,   # NEW: exposed training settings
-    composite_rules:  Optional[dict] = None,   # NEW: composite blocking rules
+    hyperparams:      Optional[dict] = None,   # EM training hyperparameters
+    composite_rules:  Optional[dict] = None,   # composite blocking rules e.g. "first_name+dob"
+    comp_types:       Optional[dict] = None,   # field → comparison type (upload flow)
 ) -> dict:
     """Thin wrapper: merges composite rules into blocking_toggles, then delegates
     to the internal logic.  All hyperparams are forwarded to the model settings
@@ -822,7 +764,49 @@ def run_linkage(                      # Re-define with extra param
     )
 
     # ── Build settings (now uses hyperparams for EM config) ───────────────────
-    settings = _build_model_settings_hp(link_type, selected_fields, merged_toggles, hp)
+    settings = _build_model_settings_hp(
+        link_type, selected_fields, merged_toggles, hp,
+        comp_types=comp_types,    # Pass user-specified comparison types
+    )
+
+    # ── Ensure Splink-required columns exist in EVERY input table ────────────
+    # unique_id and source_dataset MUST be present in all tables before the
+    # Linker is created.  If either is absent from any table we add it now,
+    # so the column intersection used by the UNION ALL alignment below always
+    # includes these two columns.
+    import re as _re_sr
+    for _i, _df in enumerate(input_tables):
+        _df = _df.copy()
+        if "unique_id" not in _df.columns:
+            _prefix = ("AB"[_i] if _i < 2 else str(_i))
+            _df.insert(0, "unique_id",
+                       _prefix + "_" + pd.Series(range(len(_df))).astype(str))
+        if "source_dataset" not in _df.columns:
+            _df["source_dataset"] = "A" if _i == 0 else "B"
+        input_tables[_i] = _df
+
+    # ── Column alignment for link mode ────────────────────────────────────────
+    # Splink generates a UNION ALL of all input tables to create an internal
+    # concatenated table used for all subsequent SQL. UNION ALL requires
+    # IDENTICAL column lists in every table. If Dataset A has columns that
+    # Dataset B lacks (e.g. NC voter registration has first_name but voter
+    # history does not), the UNION ALL SQL fails with "column not found".
+    # Fix: restrict ALL input tables to the intersection of their columns
+    # BEFORE passing them to the Linker. Comparisons and blocking rules are
+    # then validated against this common schema by _validate_and_filter_settings.
+    if len(input_tables) > 1:
+        # Compute the set of columns that exist in every input table
+        _common_schema = set(input_tables[0].columns)
+        for _df in input_tables[1:]:
+            _common_schema &= set(_df.columns)
+        # Drop columns that are not shared so the UNION ALL schema is consistent
+        input_tables = [
+            _df[[c for c in _df.columns if c in _common_schema]].copy()
+            for _df in input_tables
+        ]
+
+    # Remove comparisons and blocking rules whose columns are not in all tables.
+    settings = _validate_and_filter_settings(settings, input_tables)
 
     db_api = DuckDBAPI()
     linker  = Linker(
@@ -898,10 +882,11 @@ def run_linkage(                      # Re-define with extra param
     }
 
 
-def _build_model_settings_hp(link_type, selected_fields, blocking_toggles, hp) -> dict:
-    """Build Splink settings dict, now accepting hyperparams for EM config."""
-    comparisons    = _build_comparisons(selected_fields)
-    blocking_rules = _build_blocking_rules(blocking_toggles)   # handles composites
+def _build_model_settings_hp(link_type, selected_fields, blocking_toggles, hp,
+                              comp_types: dict = None) -> dict:
+    """Build Splink settings dict accepting hyperparams and comparison types."""
+    comparisons    = _build_comparisons(selected_fields, comp_types)  # user types
+    blocking_rules = _build_blocking_rules(blocking_toggles)          # handles composites
     return {
         "link_type":         link_type,
         "unique_id_column_name": "unique_id",
@@ -948,27 +933,31 @@ def _train_probabilistic_hp(linker, selected_fields, hp) -> None:
         )
 
 
-# Patch _build_blocking_rules to support composite keys (e.g. "first_name+surname")
-_orig_build_blocking = _build_blocking_rules   # Keep original
+# (Stale _build_blocking_rules removed: now handled by the generic version above which uses brl.block_on(key) for ANY field name)
 
-def _build_blocking_rules(blocking_toggles: dict) -> list:
-    """Build blocking rule objects; supports both single-field and composite keys.
-    Composite keys use '+' separator: 'first_name+surname' → block_on('first_name', 'surname')
+
+# =============================================================================
+# ── SAVE MODEL AS JSON ────────────────────────────────────────────────────────
+# Reconstruct a full Splink model JSON from settings + extracted model params.
+# The output is accepted by run_linkage_from_json() and the advanced flow.
+# =============================================================================
+
+def reconstruct_model_json(settings_used: dict, model_params: dict) -> dict:
+    """Build a Splink model JSON from settings_used + trained model_params.
+
+    Takes the settings dict returned by run_linkage() and the model_params
+    dict from _extract_model_params(), and injects the trained m/u probabilities
+    back into the comparison levels so the JSON can be used to skip training.
+
+    Works for both probabilistic (m/u populated) and deterministic runs
+    (m/u will be null in the output, which is valid for deterministic replay).
+
+    Returns a dict that json.dumps() can serialise directly.
     """
-    active = []
-    for key, enabled in blocking_toggles.items():
-        if not enabled:
-            continue                             # Skip disabled rules
-        if "+" in key:
-            # Composite rule: split on '+' and build multi-field block_on
-            fields = [f.strip() for f in key.split("+")]
-            valid  = [f for f in fields if f in _FIELD_BLOCKING_RULES]
-            if len(valid) >= 2:
-                active.append(brl.block_on(*valid))    # e.g. block_on("first_name","surname")
-        elif key in _FIELD_BLOCKING_RULES:
-            active.append(_FIELD_BLOCKING_RULES[key]())
-        # Unknown keys are silently skipped
+    import copy
+    import math as _math
 
+<<<<<<< Updated upstream
     if not active:
         raise ValueError("At least one blocking rule must be enabled.")
     return active
@@ -995,6 +984,8 @@ def reconstruct_model_json(settings_used: dict, model_params: dict) -> dict:
     import copy
     import math as _math
 
+=======
+>>>>>>> Stashed changes
     model = copy.deepcopy(settings_used)    # Never mutate the original
 
     # ── Inject prior probability ───────────────────────────────────────────────

@@ -1,4 +1,4 @@
-# Splink Cohort Builder
+# Cohort Builder
 
 A Streamlit application for record linkage and deduplication using Splink and DuckDB. Built at Swansea University as an MVP for cohort construction workflows, targeting both non-technical and technical users.
 
@@ -11,7 +11,12 @@ A Streamlit application for record linkage and deduplication using Splink and Du
 **Upload mode** — bring your own data. Upload one or two CSV files, run the automated EDA cleaning pipeline, configure fields and blocking rules, then follow the same analysis, comparison, and export steps as standard mode.  
 **Advanced mode** — for power users with a pre-trained Splink model. Upload a model JSON file, skip all training, and jump straight to prediction, interactive blocking exploration, and export. Models trained in standard or upload mode can be saved as JSON and reused here.
 
+<<<<<<< Updated upstream
 --- 
+=======
+**Upload mode** - for users to upload their own datasets, clean and standardise the fields, and then run the analysis. Users can generate an error prone dataset from their original dataset to test out the linkage model.
+
+>>>>>>> Stashed changes
 You can save your exisiting model on Splink using the following code:
 ```
 # Save model to JSON
@@ -45,7 +50,12 @@ Please ensure, comparisons contains m and u probabilities.
 - Exposed training hyperparameters: EM iterations, convergence threshold, recall estimate
 - Confusion matrix with ground truth from the cluster column: TP, FP, FN, Precision, Recall, F1, F*, FDR, FNR
 - Precision-Recall curve and CRL (Composite Reliability of Linkage) score
+<<<<<<< Updated upstream
 - Full metrics suite covering linkage-metrics examples 0–16
+=======
+- Clickable sidebar navigation with back button and jump-to-export shortcut
+- Full metrics suite covering linkage-metrics: match weight histogram, gamma scores, cluster size distribution, confusion matrix, Venn diagram, inter-run edge comparison
+>>>>>>> Stashed changes
 - SeRP-style downloadable PDF report with nine sections
 
 ---
@@ -83,7 +93,15 @@ cohort_builder/
 │   ├── eda_engine.py         # Automated EDA and cleaning pipeline for uploaded data
 │   ├── splink_runner.py      # Linkage workflow, JSON flow, coverage matrix, re-clustering, model JSON export
 │   ├── metrics_engine.py     # All linkage quality metrics (examples 0-16 + confusion matrix)
-│   └── report_gen.py         # SeRP-style PDF report generator
+│   ├── report_gen.py         # SeRP-style PDF report generator
+│   └── splink_runner.py 
+├── flow/
+│   ├── p_advanced.py
+│   ├── p_analysis.py
+│   ├── p_compare_export.py
+│   ├── p_landing.py
+│   ├── p_standard.py
+│   └── p_upload.py
 └── requirements.txt
 ```
 

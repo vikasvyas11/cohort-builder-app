@@ -508,6 +508,28 @@ def compute_confusion_matrix(
                 "recall": 0.0, "f1": 0.0, "fdr": 1.0, "fnr": 1.0,
                 "n_gt_edges": 0, "df_predict_labelled": pd.DataFrame()}
 
+    # Ground truth requires a 'cluster' column with entity group labels.
+    # Uploaded datasets will not have this column — return a graceful message
+    # rather than crashing with a KeyError.
+    has_cluster_a = "cluster" in fakea.columns
+    has_cluster_b = (fakeb is None) or ("cluster" in fakeb.columns)
+    if not has_cluster_a:
+        return {
+            "tp": None, "fp": None, "fn": None,
+            "n_gt_edges": None, "n_pred_edges": len(df_predict),
+            "precision": None, "recall": None, "f1": None,
+            "fdr": None, "fnr": None, "fstar": None,
+            "df_predict_labelled": pd.DataFrame(),
+            "unavailable": True,
+            "unavailable_reason": (
+                "The confusion matrix requires a 'cluster' column in the dataset "
+                "as the ground-truth entity label. The uploaded dataset does not "
+                "contain this column. The confusion matrix is only available when "
+                "using the built-in fake1000 dummy dataset, which includes known "
+                "ground-truth cluster assignments."
+            ),
+        }
+
     try:
         con = duckdb.connect()
 

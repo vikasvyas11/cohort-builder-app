@@ -646,9 +646,9 @@ def _datasets_section(pdf, n_input, operation_mode, fields, miss_a, miss_b):
     )
 
     # Dataset A
-    pdf.h2("Base table name: Dataset A (fake1000a)")
-    pdf.kv("Dataset", "Splink fake_1000 + gender (name inference) + postcode (UK GeoNames)")
-    pdf.kv("Number of rows", str(n_input if operation_mode == "dedupe" else 1000))
+    pdf.h2("Base table name: Dataset A")
+    pdf.kv("Dataset", "Linkage input dataset")
+    pdf.kv("Number of rows", str(n_input))
     pdf.h2("Linkage fields")
     pdf.body(", ".join(fields))
     pdf.h2("Field mapping (Dataset A)")
@@ -675,7 +675,7 @@ def _datasets_section(pdf, n_input, operation_mode, fields, miss_a, miss_b):
             "errors: 14% first-name typos, 9% surname typos, 5% missing DOBs, "
             "15% email variations, 11% city abbreviations, 7% gender errors."
         )
-        pdf.kv("Number of rows", str(500))
+        pdf.kv("Number of rows", str(n_input - (n_input if operation_mode == "dedupe" else 0)))
         pdf.h2("Field mapping (Dataset B)")
         pdf.table(
             ["Linkage System Alias", "Source Fieldname"],
@@ -968,18 +968,23 @@ def _confusion_section(pdf, cm: dict, truth_space_df: pd.DataFrame, crl: dict, l
         "TN is omitted (too large for pairwise comparison)."
     )
 
-    if "error" in cm:
-        pdf.body(f"Confusion matrix could not be computed: {cm['error']}")
+    # Guard: return early if matrix is unavailable or errored
+    if not cm or "error" in cm or cm.get("unavailable"):
+        reason = (cm.get("unavailable_reason")
+                  or cm.get("error")
+                  or "Confusion matrix not available for this dataset.")
+        pdf.body(reason)
         return
 
-    tp = cm.get("tp", 0)
-    fp = cm.get("fp", 0)
-    fn = cm.get("fn", 0)
+    # Guard None values — keys exist but may be None when cluster col is absent
+    tp = cm.get("tp") or 0
+    fp = cm.get("fp") or 0
+    fn = cm.get("fn") or 0
     pdf.kv("True Positives (TP)",  f"{tp:,}")
     pdf.kv("False Positives (FP)", f"{fp:,}")
     pdf.kv("False Negatives (FN)", f"{fn:,}")
-    pdf.kv("Ground truth pairs",   f"{cm.get('n_gt_edges', 0):,}")
-    pdf.kv("Predicted pairs",      f"{cm.get('n_pred_edges', 0):,}")
+    pdf.kv("Ground truth pairs",   f"{cm.get('n_gt_edges') or 0:,}")
+    pdf.kv("Predicted pairs",      f"{cm.get('n_pred_edges') or 0:,}")
     pdf.ln(2)
 
     pdf.h2("Derived Metrics")
