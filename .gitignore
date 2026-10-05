@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Streamlit secrets and local config overrides - never commit these
+.streamlit/secrets.toml
+
+# Local data and generated output (the app ships no real data)
+*.csv
+!tests/fixtures/*.csv
+data/
+output/
+*.pdf
+model*.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Raw voter files list real, named people - never commit them
+ncvoter*.txt
+voter_registry.csv
+ncvoter*.zip

@@ -1,0 +1,9 @@
+[server]
+maxUploadSize = 50          # MB; hosted instances have little memory to spare
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#1E6EC4"

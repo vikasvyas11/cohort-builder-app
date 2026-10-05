@@ -1,0 +1,11 @@
+# Runtime dependencies. Install with:  pip install -r requirements.txt
+#
+# Lower bounds are the oldest releases the full test suite passes on
+# (Python 3.12). Splink is capped below 5: Splink 5 changed its dataset and
+# settings APIs and this app has not been ported. Other caps guard future majors.
+streamlit>=1.62,<2
+splink>=4.0.14,<5
+duckdb>=1.1,<2
+pandas>=2.1,<4
+numpy>=1.26,<3
+plotly>=5.18,<8
