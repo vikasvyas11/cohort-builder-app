@@ -299,7 +299,8 @@ def render_run_results(slot: str) -> None:
                     with st.container(border=True):
                         tc, ic = st.columns([1, 3])
                         new_val = tc.toggle(
-                            "", value=currently_on, key=f"{slot}_exp_tog_{field}"
+                            f"Use {field} rule", value=currently_on, key=f"{slot}_exp_tog_{field}",
+                            label_visibility="collapsed",
                         )
                         new_toggles[field] = new_val
                         sql = f'l."{field}" = r."{field}"'
@@ -359,24 +360,18 @@ def render_run_results(slot: str) -> None:
                     display_cols = id_cols + rule_cols + score_cols + gamma_cols
                     display_df   = filtered_df[display_cols].head(200).copy()
 
-                    # Colour-code match_probability: show as bar chart column
-                    if "match_probability" in display_df.columns:
-                        st.dataframe(
-                            display_df.style.background_gradient(
-                                subset=["match_probability"],
-                                cmap="RdYlGn",
-                                vmin=0, vmax=1,
-                            ),
-                            width="stretch",
-                            height=360,
-                        )
-                    else:
-                        st.dataframe(display_df, width="stretch", height=360)
+                    # match_probability as a progress bar (built into Streamlit; no matplotlib needed)
+                    st.dataframe(
+                        display_df,
+                        column_config={"match_probability": st.column_config.ProgressColumn(
+                            "match_probability", min_value=0.0, max_value=1.0, format="%.3f")},
+                        width="stretch",
+                        height=360,
+                    )
 
                     st.caption(
                         f"Showing up to 200 of {n_filtered:,} filtered pairs. "
-                        "match_probability is colour-coded: red = low confidence, "
-                        "green = high confidence."
+                        "The match_probability bar is full for high-confidence pairs."
                     )
 
             # ── Match quality by demographic group (real-time) ─────────────────

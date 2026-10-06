@@ -1,9 +1,14 @@
 """Shared fixtures. Heavy fixtures are session-scoped: a Splink run takes seconds."""
 
 import logging
+import sys
 import warnings
 
 import pytest
+
+# matplotlib is deliberately not a dependency (pandas only needs it for Styler colouring). Make any
+# import of it fail here so a dev machine that happens to have it cannot hide a missing requirement.
+sys.modules["matplotlib"] = None
 
 warnings.filterwarnings("ignore")
 logging.getLogger("streamlit").setLevel(logging.ERROR)
