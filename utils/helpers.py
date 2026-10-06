@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from modules.splink_runner import (
-    MAX_CANDIDATE_PAIRS, build_coverage_matrix, determine_cascade_order, estimate_candidate_pairs, run_linkage,
+    MAX_CANDIDATE_PAIRS, blocking_rule_patterns, build_coverage_matrix, determine_cascade_order, estimate_candidate_pairs, run_linkage,
 )
 from modules.demographics import (
     compute_demographic_breakdowns, compute_edge_demographic_quality,
@@ -295,7 +295,8 @@ def render_demographic_comparison(
 
 def render_blocking_waterfall(coverage_matrix: pd.DataFrame, cascade_order: list,
                                active_toggles: dict, key_prefix: str = "waterfall",
-                               titles: tuple = ("Original rules", "Toggled rules (live)")) -> None:
+                               titles: tuple = ("Original rules", "Toggled rules (live)"),
+                               baseline_toggles: "dict | None" = None) -> None:
     """Side-by-side blocking-rule edge charts.
 
       LEFT  — "Original": replicates Splink's own
@@ -319,7 +320,8 @@ def render_blocking_waterfall(coverage_matrix: pd.DataFrame, cascade_order: list
     Both charts are built from the SAME underlying attribution
     (compute_blocking_waterfall) so they always agree with each other, and they share
     one layout and y-axis scale so they can be compared side by side.
-    ``titles`` names the left and right chart.
+    ``titles`` names the left and right chart. With ``baseline_toggles`` (Compare Runs) the left
+    chart shows that rule set instead of "all rules on" and a table lists each rule's change.
     """
     from modules.splink_runner import compute_blocking_waterfall
 
@@ -329,12 +331,24 @@ def render_blocking_waterfall(coverage_matrix: pd.DataFrame, cascade_order: list
         return
 
     fields            = data["fields"]
-    all_active_count  = data["all_active_count"]
     active_only_count = data["active_only_count"]
-    grand_total       = data["grand_total"]
     active_total      = data["active_total"]
+    # The left chart's rule set: every rule on, or (when comparing runs) the baseline run's rules.
+    if baseline_toggles is None:
+        all_active_count, grand_total = data["all_active_count"], data["grand_total"]
+    else:
+        base = compute_blocking_waterfall(coverage_matrix, cascade_order, baseline_toggles)
+        all_active_count, grand_total = base["active_only_count"], base["active_total"]
 
     x_labels = [f"Rule {i+1}: {f}" for i, f in enumerate(fields)]
+
+    if baseline_toggles is not None:
+        delta = active_total - grand_total
+        m1, m2, m3 = st.columns(3)
+        m1.metric(f"{titles[0]}: candidate pairs", f"{grand_total:,}")
+        m2.metric(f"{titles[1]}: candidate pairs", f"{active_total:,}", delta=f"{delta:+,}")
+        m3.metric("Rules on", f"{sum(1 for f in fields if active_toggles.get(f))}",
+                  delta=f"{sum(1 for f in fields if active_toggles.get(f)) - sum(1 for f in fields if baseline_toggles.get(f)):+d}")
 
     y_top = max(grand_total, active_total, 1) * 1.12
     layout = dict(template="simple_white", height=420, showlegend=False,
@@ -383,10 +397,11 @@ def render_blocking_waterfall(coverage_matrix: pd.DataFrame, cascade_order: list
             totals={"marker": {"color": "#1E6EC4"}},
         ))
 
-        disabled_idx = [i for i, f in enumerate(fields) if not active_toggles.get(f, False)]
+        disabled_idx = [i for i, f in enumerate(fields)
+                        if not active_toggles.get(f, False) and all_active_count.get(f, 0) > 0]
         if disabled_idx:
             fig_right.add_trace(go.Bar(
-                name="Disabled (original contribution)",
+                name="Switched off (previous contribution)",
                 x=[x_labels[i] for i in disabled_idx],
                 y=[all_active_count.get(fields[i], 0) for i in disabled_idx],
                 marker_color="#C0392B",
@@ -394,7 +409,7 @@ def render_blocking_waterfall(coverage_matrix: pd.DataFrame, cascade_order: list
                 textposition="inside",
             ))
 
-        lost = max(grand_total - active_total, 0)
+        lost = max(grand_total - active_total, 0) if baseline_toggles is None else 0
         if lost > 0:
             fig_right.add_trace(go.Bar(
                 name="Lost (no active rule catches these)",
@@ -406,21 +421,43 @@ def render_blocking_waterfall(coverage_matrix: pd.DataFrame, cascade_order: list
         fig_right.update_layout(**layout)
         st.plotly_chart(fig_right, width="stretch", key=f"{key_prefix}_toggled")
 
-    st.caption(
-        "Switching a rule off does not simply remove its edges: later rules may already cover the same "
-        "pairs and catch them. **Red** = a switched-off rule's original share, or edges no remaining rule "
-        "covers. Both charts use the same scale."
-    )
-    st.caption(
-        f"All rules on: **{grand_total:,}** edges. "
-        f"With the current selection: **{active_total:,}** edges recoverable "
-        f"({'no loss' if lost == 0 else f'{lost:,} permanently lost — no active rule covers them'})."
-    )
+    if baseline_toggles is not None:
+        rows = [{"Rule": f, f"{titles[0]}": all_active_count.get(f, 0),
+                 f"{titles[1]}": active_only_count.get(f, 0),
+                 "Change": active_only_count.get(f, 0) - all_active_count.get(f, 0)} for f in fields]
+        rows.append({"Rule": "Total (distinct pairs)", f"{titles[0]}": grand_total,
+                     f"{titles[1]}": active_total, "Change": active_total - grand_total})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.caption(
+            "Each pair is credited to the first rule, in the order shown, that covers it, so no pair is counted "
+            "twice. Switching a rule off hands its pairs to later rules that also cover them; a combined rule "
+            "such as first_name+last_name only adds pairs when the single-field rules it contains are off. "
+            "**Red** = what a switched-off rule contributed before. Both charts use the same scale."
+        )
+    else:
+        st.caption(
+            "Switching a rule off does not simply remove its edges: later rules may already cover the same "
+            "pairs and catch them. **Red** = a switched-off rule's original share, or edges no remaining rule "
+            "covers. Both charts use the same scale."
+        )
+        st.caption(
+            f"All rules on: **{grand_total:,}** edges. "
+            f"With the current selection: **{active_total:,}** edges recoverable "
+            f"({'no loss' if lost == 0 else f'{lost:,} permanently lost — no active rule covers them'})."
+        )
+
+
+@st.cache_data(show_spinner="Counting candidate pairs for each rule...")
+def cached_rule_patterns(dataset_a: pd.DataFrame, dataset_b: "pd.DataFrame | None",
+                         operation_mode: str, rules: tuple) -> tuple:
+    """:func:`blocking_rule_patterns`, cached so toggling a rule only re-weights the table."""
+    return blocking_rule_patterns(dataset_a, dataset_b, operation_mode, list(rules))
 
 
 def render_waterfall_section(coverage_matrix: pd.DataFrame, toggles: dict,
                               blocking_mode: str, key_prefix: str, run_label: str = "",
-                              titles: tuple = ("Original rules", "Toggled rules (live)")) -> None:
+                              titles: tuple = ("Original rules", "Toggled rules (live)"),
+                              baseline_toggles: "dict | None" = None) -> None:
     """Shared boilerplate for all three Blocking Explorer locations (Run 1's
     own explorer, the within-run toggle tab, Run 2's explorer): renders the
     cascading waterfall chart for OR-mode runs, or an explanatory note for
@@ -440,7 +477,8 @@ def render_waterfall_section(coverage_matrix: pd.DataFrame, toggles: dict,
         )
         try:
             cascade_fields = determine_cascade_order(coverage_matrix, list(toggles.keys()))
-            render_blocking_waterfall(coverage_matrix, cascade_fields, toggles, key_prefix=key_prefix, titles=titles)
+            render_blocking_waterfall(coverage_matrix, cascade_fields, toggles, key_prefix=key_prefix, titles=titles,
+                                      baseline_toggles=baseline_toggles)
         except Exception as e:
             st.warning(f"Could not compute blocking waterfall: {e}")
         st.divider()

@@ -6,6 +6,8 @@ Pick or upload data, choose which fields to compare and which blocking rules gen
 run a deterministic or probabilistic (Fellegi–Sunter) linkage, check how accurate it is, compare a
 second run, and export the resulting cohort.
 
+**Try it live: <https://cohortbuilder.streamlit.app/>**
+
 It ships with **synthetic demo data** (no real people, no downloads, no API keys), so it runs out of
 the box and is safe to host publicly.
 
@@ -27,6 +29,11 @@ the box and is safe to host publicly.
   change.
 - **Accuracy against ground truth** when the data has a `cluster` column: precision, recall, F1, F\*,
   confusion matrix, precision–recall curve, average precision.
+- **Live cascading waterfall** on the Compare Runs step: toggle blocking rules or add a combined rule
+  (e.g. `first_name+last_name`) and see how many candidate pairs each rule contributes and the net effect
+  on the total, against Run 1. Counted from the data, so rules Run 1 never used are included.
+- **AI Assistant link** under the results, for help interpreting them and tuning parameters (a separate
+  Hugging Face Space trained on Splink, linkage theory and this app's documentation).
 - **Run 1 vs Run 2** comparison, a self-contained **HTML report** per run (opens offline, prints to PDF),
   a saveable **model JSON**, and a **cohort CSV** with `cluster_id`.
 

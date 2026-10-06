@@ -50,8 +50,12 @@ Pages 4–6 are shared by every flow.
    `df_cluster`, model parameters, missingness, blocking counts, unlinkables and the effective settings.
 4. The results page shows metrics, demographics, the blocking explorer, cluster studio, accuracy and raw
    tables, and offers model-JSON and HTML report downloads.
-5. *Compare runs* offers a within-run toggle analysis (filter edges by the coverage matrix and re-cluster
-   without retraining) and a full Run 2 with new blocking rules, then a Run 1 vs Run 2 comparison.
+5. *Compare runs* offers Run 2 rule toggles and combined-field rules with a **live cascading waterfall**:
+   `blocking_rule_patterns` counts, per distinct combination of rules that cover a pair, how many pairs
+   there are (cached; DuckDB hash joins, within the pair budget). Toggling then only re-weights that small
+   table, and `compute_blocking_waterfall` credits each pair to the first enabled rule in cascade order.
+   Left chart = Run 1's rules, right = the live Run 2 selection. Then a full Run 2 and a Run 1 vs Run 2
+   comparison. (Run 1's own Blocking Explorer tab keeps its edge-table filter and re-cluster button.)
 6. *Export* merges `cluster_id` onto the input records and offers the cohort CSV.
 
 ## Metrics design
@@ -75,6 +79,7 @@ the fields whose blocking rules are switched on (one field if only one is on).
 | `splink_runner.run_linkage_from_json(model, ...)` | Prediction from a saved model, no training |
 | `splink_runner.reconstruct_model_json(settings, params, type)` | Re-loadable model file incl. trained m/u |
 | `splink_runner.build_coverage_matrix` / `filter_predict_by_active_rules` / `compute_blocking_waterfall` / `recluster_filtered` | Blocking explorer |
+| `splink_runner.blocking_rule_patterns(...)` | Per-rule candidate-pair counts straight from the data (any rule, incl. `a+b`); powers the live Compare Runs waterfall |
 | `splink_runner.estimate_candidate_pairs(...)` | Pre-flight pair count for a blocking configuration |
 | `metrics_engine.compute_intra_metrics` / `compute_inter_metrics` | Per-run and run-vs-run statistics |
 | `metrics_engine.compute_confusion_matrix` / `compute_threshold_curve` / `summarise_threshold_curve` | Accuracy against ground truth |

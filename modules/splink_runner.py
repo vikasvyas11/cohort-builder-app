@@ -905,6 +905,95 @@ def estimate_candidate_pairs(
     return int(n)
 
 
+def blocking_rule_patterns(
+    dataset_a:      pd.DataFrame,
+    dataset_b:      Optional[pd.DataFrame],
+    operation_mode: str,
+    rules:          list,
+    max_pairs:      Optional[int] = None,
+) -> tuple:
+    """Which blocking rules would generate each candidate pair, counted straight from the data.
+
+    This is what makes the Compare Runs waterfall live: unlike a coverage matrix built from a
+    finished run's predictions, it knows about rules the run never used, including new
+    composite rules such as ``first_name+last_name`` (a pair must agree on every part).
+
+    A rule is a column name or an ``a+b`` composite. Candidate pairs are pairs of records in
+    Dataset A for ``dedupe``, otherwise A x B pairs, matching what the linkage itself scores.
+    The result has one row per distinct *pattern* (which rules cover the pair) with the number
+    of pairs showing it, so memory stays small however many pairs there are:
+
+        covers_<rule> (bool) for each included rule, ``n_pairs`` (int)
+
+    Rules are admitted from most to least selective until ``max_pairs`` (the app's pair budget)
+    would be exceeded; the rest are returned in ``skipped`` as ``(rule, pair_count)`` and left
+    out of the table. Rules naming a column the data lacks are skipped with ``pair_count`` None.
+
+    Returns ``(patterns, skipped)``.
+    """
+    max_pairs = MAX_CANDIDATE_PAIRS if max_pairs is None else max_pairs
+    use_b = operation_mode != "dedupe" and dataset_b is not None and not dataset_b.empty
+    available = set(dataset_a.columns) & (set(dataset_b.columns) if use_b else set(dataset_a.columns))
+
+    parts_of, skipped = {}, []
+    for rule in dict.fromkeys(rules):
+        parts = [p.strip() for p in rule.split("+") if p.strip()]
+        if parts and all(p in available for p in parts):
+            parts_of[rule] = parts
+        else:
+            skipped.append((rule, None))
+    if not parts_of or dataset_a.empty:
+        return pd.DataFrame(columns=["n_pairs"]), skipped
+
+    columns = sorted({p for parts in parts_of.values() for p in parts})
+    frames = [dataset_a[columns].astype("string").assign(_src=0)]
+    if use_b:
+        frames.append(dataset_b[columns].astype("string").assign(_src=1))
+    table = pd.concat(frames, ignore_index=True)
+    table["_rid"] = range(len(table))
+
+    guard = "l._src = 0 AND r._src = 1" if use_b else "l._rid < r._rid"
+
+    def agree(parts: list) -> str:
+        return " AND ".join(f"l.{_ident(p)} = r.{_ident(p)}" for p in parts)
+
+    con = duckdb.connect()
+    con.execute(f"SET memory_limit='{DUCKDB_MEMORY_LIMIT}'")
+    try:
+        con.register("t", table)
+        sizes = {rule: int(con.sql(f"SELECT COUNT(*) FROM t l JOIN t r ON {agree(parts)} AND {guard}")
+                           .fetchone()[0]) for rule, parts in parts_of.items()}
+        included, used = [], 0
+        for rule in sorted(sizes, key=sizes.get):
+            if used + sizes[rule] <= max_pairs:
+                included.append(rule)
+                used += sizes[rule]
+            else:
+                skipped.append((rule, sizes[rule]))
+        if not included:
+            return pd.DataFrame(columns=["n_pairs"]), skipped
+
+        pairs = " UNION ".join(
+            f"SELECT l._rid AS i, r._rid AS j FROM t l JOIN t r ON {agree(parts_of[rule])} AND {guard}"
+            for rule in included)
+        flags = ", ".join(f"COALESCE({agree(parts_of[rule])}, FALSE) AS {_ident('covers_' + rule)}"
+                          for rule in included)
+        positions = ", ".join(str(k + 1) for k in range(len(included)))
+        patterns = con.sql(
+            f"WITH p AS ({pairs}) SELECT {flags}, COUNT(*) AS n_pairs "
+            f"FROM p JOIN t l ON l._rid = p.i JOIN t r ON r._rid = p.j GROUP BY {positions}").df()
+    finally:
+        con.close()
+    return patterns, skipped
+
+
+def _pair_weights(coverage_matrix: pd.DataFrame) -> pd.Series:
+    """Pairs each row stands for: ``n_pairs`` for a pattern table, else 1 per pair."""
+    if "n_pairs" in coverage_matrix.columns:
+        return coverage_matrix["n_pairs"].astype("int64")
+    return pd.Series(1, index=coverage_matrix.index, dtype="int64")
+
+
 def _get_or_build_covers_column(coverage_matrix: pd.DataFrame, field_key: str):
     """Return the covers_<field_key> boolean series from coverage_matrix,
     building it on the fly for composite ('a+b') keys by AND-ing each
@@ -933,9 +1022,10 @@ def determine_cascade_order(coverage_matrix: pd.DataFrame, fields: list) -> list
     appear in `fields` (i.e. configuration selection order).
     """
     scored = []
+    weights = _pair_weights(coverage_matrix)
     for i, f in enumerate(fields):
         series = _get_or_build_covers_column(coverage_matrix, f)
-        count = int(series.sum()) if series is not None else 0
+        count = int(weights[series].sum()) if series is not None else 0
         scored.append((-count, i, f))
     scored.sort()
     return [f for _, _, f in scored]
@@ -978,6 +1068,10 @@ def compute_blocking_waterfall(coverage_matrix: pd.DataFrame, cascade_order: lis
                 "grand_total": 0, "active_total": 0}
 
     idx = coverage_matrix.index
+    weights = _pair_weights(coverage_matrix)
+
+    def share_by_rule(effective: pd.Series, covered: pd.Series) -> dict:
+        return {k: int(v) for k, v in weights[covered].groupby(effective[covered]).sum().items()}
 
     # ── Baseline: effective rule assuming ALL cascade fields active ─────────
     eff_all = pd.Series("unknown", index=idx)
@@ -985,8 +1079,8 @@ def compute_blocking_waterfall(coverage_matrix: pd.DataFrame, cascade_order: lis
     for f in reversed(valid_fields):
         eff_all = eff_all.mask(cover_series[f], f)
         any_covered_all = any_covered_all | cover_series[f]
-    all_active_count = eff_all[any_covered_all].value_counts().to_dict()
-    grand_total = int(any_covered_all.sum())
+    all_active_count = share_by_rule(eff_all, any_covered_all)
+    grand_total = int(weights[any_covered_all].sum())
 
     # ── Current: effective rule among only ENABLED cascade fields ───────────
     enabled_fields = [f for f in valid_fields if active_toggles.get(f, False)]
@@ -996,8 +1090,8 @@ def compute_blocking_waterfall(coverage_matrix: pd.DataFrame, cascade_order: lis
         for f in reversed(enabled_fields):
             eff_active = eff_active.mask(cover_series[f], f)
             any_covered_active = any_covered_active | cover_series[f]
-        active_only_count = eff_active[any_covered_active].value_counts().to_dict()
-        active_total = int(any_covered_active.sum())
+        active_only_count = share_by_rule(eff_active, any_covered_active)
+        active_total = int(weights[any_covered_active].sum())
     else:
         active_only_count = {}
         active_total = 0

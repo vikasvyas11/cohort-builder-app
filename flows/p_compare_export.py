@@ -6,8 +6,10 @@ import streamlit as st
 
 from modules.metrics_engine import compute_inter_metrics
 from flows.run_results import render_run_results
+from modules.splink_runner import MAX_CANDIDATE_PAIRS
 from utils.helpers import (
-    _metric_cards, render_assistant_link, render_report_download, render_waterfall_section, run_and_evaluate,
+    _metric_cards, cached_rule_patterns, render_assistant_link, render_report_download, render_waterfall_section,
+    run_and_evaluate,
 )
 from utils.nav import _back_button, _go_to
 
@@ -39,6 +41,32 @@ def _rule_toggles(run1: dict) -> tuple[dict, dict]:
                 del composites[key]
                 st.rerun()
     return toggles, composites
+
+
+def _live_waterfall(run1: dict, toggles: dict, composites: dict) -> None:
+    """Cascading waterfall of candidate pairs per rule, redrawn on every toggle or new combined rule.
+
+    Pair counts come from the data itself (not from Run 1's predictions), so it also shows rules
+    Run 1 never used. Run 1's rules are the left chart; the current Run 2 selection is the right.
+    """
+    st.subheader("Effect of your changes (live)")
+    config = run1["run_config"]
+    live = {**toggles, **{rule: True for rule in composites}}
+    baseline = {rule: bool(on) for rule, on in config["blocking_toggles"].items()}
+    rules = list(dict.fromkeys([*live, *baseline]))
+    operation_mode = config.get("operation_mode") or st.session_state["operation_mode"]
+    patterns, skipped = cached_rule_patterns(
+        st.session_state["dataset_a"], st.session_state.get("dataset_b"), operation_mode, tuple(rules))
+    if patterns.empty:
+        st.info("None of these rules can be counted on the loaded data.")
+        return
+    for rule, size in skipped:
+        reason = (f"would add about {size:,} pairs, over the {MAX_CANDIDATE_PAIRS:,}-pair limit"
+                  if size is not None else "uses a column that is not in the data")
+        st.warning(f"Rule **{rule}** is left out of the chart: it {reason}.")
+    render_waterfall_section(
+        patterns, {rule: live.get(rule, False) for rule in rules}, config.get("blocking_mode", "OR"),
+        key_prefix="cmp_waterfall", titles=("Run 1 rules", "Run 2 selection (live)"), baseline_toggles=baseline)
 
 
 def _side_by_side(run1: dict, run2: dict) -> None:
@@ -94,15 +122,7 @@ def page_comparison():
 
     st.subheader("Blocking rules for Run 2")
     toggles, composites = _rule_toggles(run1)
-    cov1 = st.session_state.get("run1_coverage")
-    run1_rules = [f for f, on in run1["run_config"]["blocking_toggles"].items() if on]
-    if cov1 is not None and not cov1.empty and run1_rules:
-        st.subheader("Effect of your changes")
-        render_waterfall_section(
-            cov1, {f: toggles.get(f, composites.get(f, False)) for f in run1_rules},
-            run1["run_config"].get("blocking_mode", "OR"), key_prefix="cmp_waterfall",
-            titles=("Run 1 rules", "Run 2 selection (live)"))
-        st.caption("A rule you switch on that Run 1 did not use adds pairs only once you click Run 2.")
+    _live_waterfall(run1, toggles, composites)
 
     if not any(toggles.values()) and not composites:
         st.error("Switch on at least one blocking rule (or add a combined rule).")
