@@ -489,6 +489,18 @@ def render_threshold_curve(curve: pd.DataFrame, summary: dict, key_prefix: str) 
                   help="F* = TP / (TP + FP + FN) (Hand, Christen & Kirielle, 2021).")
 
 
+ASSISTANT_URL = "https://huggingface.co/spaces/vikasvyas/AI_Assistant_Cohort_Builder"
+
+
+def render_assistant_link(slot: str) -> None:
+    """Link to the external AI assistant (trained on Splink, linkage theory and this app's docs)."""
+    st.subheader("Need help reading these results?")
+    st.caption("The Cohort Builder AI Assistant is trained on Splink, record-linkage theory and this app's "
+               "documentation. Use it to interpret the results and decide which parameters to adjust. "
+               "It opens in a new tab and does not receive your data.")
+    st.link_button("Open the AI Assistant", ASSISTANT_URL, key=f"{slot}_assistant_link")
+
+
 def render_report_download(label: str, slot: str) -> None:
     """A button that builds the HTML report for ``slot`` ("run1" or "run2"), then offers it."""
     results = st.session_state.get(f"{slot}_results")

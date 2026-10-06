@@ -6,7 +6,9 @@ import streamlit as st
 
 from modules.metrics_engine import compute_inter_metrics
 from flows.run_results import render_run_results
-from utils.helpers import _metric_cards, render_report_download, render_waterfall_section, run_and_evaluate
+from utils.helpers import (
+    _metric_cards, render_assistant_link, render_report_download, render_waterfall_section, run_and_evaluate,
+)
 from utils.nav import _back_button, _go_to
 
 
@@ -124,6 +126,8 @@ def page_comparison():
         st.divider()
         st.header("Run 1 vs Run 2")
         _side_by_side(run1, run2)
+        st.divider()
+        render_assistant_link("run2")
         st.divider()
         st.subheader("Reports")
         left, right = st.columns(2)

@@ -26,6 +26,12 @@ def _walk(at, labels):
     return at
 
 
+def _assistant_link_count(at):
+    """How many 'AI Assistant' link buttons point at the Hugging Face space."""
+    return sum(1 for b in at.get("link_button")
+               if "AI Assistant" in b.proto.label and b.proto.url.startswith("https://huggingface.co/spaces/"))
+
+
 @pytest.fixture
 def people():
     at = AppTest.from_file(APP, default_timeout=240).run()
@@ -39,6 +45,8 @@ def test_standard_dedupe_probabilistic_full_walkthrough(people):
     assert at.session_state["run1_curve"]["average_precision"] > 0.5
     assert not at.session_state["run1_threshold_curve"].empty
     assert at.session_state["run1_cm"]["tp"] > 0
+
+    assert _assistant_link_count(at) == 1                              # sits above the report buttons
 
     at = _walk(at, ["Generate model JSON for download", "Build Run 1 report"])
     report = at.session_state["run1_report_html"].decode("utf-8")
@@ -79,6 +87,7 @@ def test_run_two_with_new_blocking_rules_and_comparison(people):
     expected = ["Edge Metrics", "Cluster Metrics", "Demographics", "Blocking Explorer",
                 "Cluster Studio", "Confusion Matrix", "Raw Data"]
     assert [t.label for t in at.tabs][:7] == expected                  # Run 2 shows what Run 1 shows
+    assert _assistant_link_count(at) == 1
     at = _walk(at, ["Build Run 2 report"])
     assert b"Linkage run report" in at.session_state["run2_report_html"]
 

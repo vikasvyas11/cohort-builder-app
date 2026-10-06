@@ -13,7 +13,7 @@ from modules.splink_runner import (
     reconstruct_model_json,
 )
 from utils.helpers import (
-    _run_analysis_and_store, render_report_download,
+    _run_analysis_and_store, render_assistant_link, render_report_download,
 )
 from flows.run_results import render_run_results
 from utils.nav import _back_button, _go_to
@@ -227,6 +227,9 @@ def page_analysis():
                             "Uploading it in Advanced Mode will run prediction without EM training.")
             except Exception as e:
                 st.error(f"Failed to generate model JSON: {e}")
+
+    st.divider()
+    render_assistant_link("run1")
 
     st.divider()
     st.subheader("Report")
